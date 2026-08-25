@@ -1,6 +1,16 @@
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
-import { Check, Copy, Plus, Ticket, Trash, Warning, WarningCircle } from '@phosphor-icons/react'
+import { useSearchParams } from 'react-router-dom'
+import {
+  Check,
+  Copy,
+  MagnifyingGlass,
+  Plus,
+  Ticket,
+  Trash,
+  Warning,
+  WarningCircle,
+} from '@phosphor-icons/react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { toast } from 'sonner'
 import { useCreateToken, useDeleteToken, useDeleteTokens, useHosts, useTokens } from '@/api/queries'
@@ -111,10 +121,40 @@ export function TokensPage() {
   const allHosts = watch('all_hosts')
   const manageHosts = watch('manage_hosts')
 
+  // 令牌量小且一次拉全量，按名称的检索在前端本地做，改动即生效、不发请求
+  const [query, setQuery] = useState('')
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return tokens.data ?? []
+    return (tokens.data ?? []).filter((token) => token.name.toLowerCase().includes(q))
+  }, [tokens.data, query])
+
+  // 与主机页同理：被搜索移出视野的令牌不该继续留在选中态里，批量删除只作用于看得见的行
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev
+      const visible = new Set(filtered.map((token) => token.id))
+      const next = new Set([...prev].filter((id) => visible.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [filtered])
+
+  /** 列表本身非空、只是被关键词清空时，换一套空态文案引导清除 */
+  const narrowedToNothing = (tokens.data?.length ?? 0) > 0 && filtered.length === 0
+
   const openCreate = () => {
     reset(defaultValues)
     setCreateOpen(true)
   }
+
+  // 命令面板「创建令牌」经 ?new=1 深链进来：消费一次参数后立刻清掉，刷新不重复弹窗
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get('new') !== '1') return
+    openCreate()
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const changeCreateOpen = (open: boolean) => {
     setCreateOpen(open)
@@ -200,9 +240,38 @@ export function TokensPage() {
 
   const isEmpty = !tokens.isLoading && tokens.data?.length === 0
 
+  const noMatchState = (
+    <EmptyState
+      icon={<MagnifyingGlass size={22} />}
+      title="没有匹配的令牌"
+      description="换个名称关键词试试。"
+      action={
+        <Button variant="outline" onClick={() => setQuery('')}>
+          清除筛选
+        </Button>
+      }
+    />
+  )
+
+  // 一份搜索框同时驱动桌面表格与移动端卡片（hosts 模式：桌面融进表卡顶部，窄屏独立成卡）
+  const searchControl = (
+    <div className="w-full sm:ml-auto sm:w-60">
+      <Input
+        pill
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="搜索令牌名称"
+        aria-label="搜索令牌名称"
+        spellCheck={false}
+        prefix={<MagnifyingGlass size={14} />}
+      />
+    </div>
+  )
+
   return (
     <PageTransition>
       <PageHeader
+        eyebrow="Tokens"
         title="Agent 令牌"
         subtitle="按主机最小授权；明文仅展示一次"
         actions={
@@ -244,20 +313,28 @@ export function TokensPage() {
         </Card>
       ) : (
         <>
+          <Card className="mb-4 p-2.5 md:hidden">{searchControl}</Card>
+
           <Card className="hidden overflow-hidden md:block">
+            {/* 检索栏即表格的标题栏：同一张卡、一条分隔线（与主机页同一套语言） */}
+            <div className="flex items-center gap-2 border-b border-border p-2.5">
+              {searchControl}
+            </div>
             <DataTable
               columns={columns}
-              rows={tokens.data}
+              rows={filtered}
               rowKey={(token) => token.id}
               loading={tokens.isLoading}
+              empty={narrowedToNothing ? noMatchState : undefined}
               selection={{ selected, onChange: setSelected }}
             />
           </Card>
 
           <div className="space-y-3 md:hidden">
-            {tokens.isLoading
-              ? Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-[124px]" />)
-              : tokens.data?.map((token) => (
+            {tokens.isLoading ? (
+              Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-[124px]" />)
+            ) : filtered.length ? (
+              filtered.map((token) => (
                   <Card
                     key={token.id}
                     className={cn('p-4', selected.has(token.id) && 'border-accent')}
@@ -296,7 +373,10 @@ export function TokensPage() {
                       创建于 {formatTime(token.created_at)}
                     </p>
                   </Card>
-                ))}
+                ))
+            ) : (
+              <Card className="p-4">{noMatchState}</Card>
+            )}
           </div>
         </>
       )}
@@ -337,7 +417,7 @@ export function TokensPage() {
           </Field>
 
           {/* 开关自带语义，横排成一条设置行比「标签在上、开关在下」更紧凑也更好点 */}
-          <div className="flex items-center justify-between gap-4 rounded-[8px] border border-border bg-surface-2 px-3 py-2.5">
+          <div className="flex items-center justify-between gap-4 rounded-control border border-border bg-surface-2 px-3 py-2.5">
             <div className="min-w-0">
               <Label htmlFor="token-all-hosts">允许全部主机</Label>
               <p className="mt-0.5 text-[12px] text-muted">关闭后只授权选定的主机</p>
@@ -355,7 +435,7 @@ export function TokensPage() {
             />
           </div>
 
-          <div className="flex items-center justify-between gap-4 rounded-[8px] border border-border bg-surface-2 px-3 py-2.5">
+          <div className="flex items-center justify-between gap-4 rounded-control border border-border bg-surface-2 px-3 py-2.5">
             <div className="min-w-0">
               <Label htmlFor="token-manage-hosts">允许管理主机</Label>
               <p className="mt-0.5 text-[12px] text-muted">
@@ -427,7 +507,7 @@ export function TokensPage() {
         }
       >
         <div className="space-y-4">
-          <div className="flex gap-2.5 rounded-[8px] border border-warning/30 bg-warning/10 px-3 py-2.5 text-warning">
+          <div className="flex gap-2.5 rounded-control border border-warning/30 bg-warning/10 px-3 py-2.5 text-warning">
             <Warning size={16} weight="fill" className="mt-0.5 shrink-0" />
             <div className="space-y-0.5">
               <p className="text-[13px] font-medium">关闭后无法再次查看</p>
@@ -440,7 +520,7 @@ export function TokensPage() {
             <code
               ref={plainRef}
               onClick={selectPlainToken}
-              className="block cursor-text rounded-[8px] bg-surface-2 px-3 py-2.5 font-mono text-[13px] leading-relaxed break-all text-text select-all"
+              className="block cursor-text rounded-control bg-surface-2 px-3 py-2.5 font-mono text-[13px] leading-relaxed break-all text-text select-all"
             >
               {plainToken}
             </code>

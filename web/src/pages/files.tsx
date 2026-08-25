@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   ArrowClockwise,
   CaretRight,
@@ -39,7 +40,13 @@ function startDownload(hostId: number, path: string, name: string) {
 }
 
 export function FilesPage() {
-  const [host, setHost] = useState<number>()
+  // 主机卡「文件」按钮经 ?host=<id> 深链进来，进页即预选中
+  const [searchParams] = useSearchParams()
+  const [host, setHost] = useState<number | undefined>(() => {
+    const raw = searchParams.get('host')
+    const id = raw ? Number(raw) : NaN
+    return Number.isFinite(id) ? id : undefined
+  })
   const [path, setPath] = useState('~')
   // draft 非空即为路径编辑态：用一个状态代替「editing 布尔 + 直接改 path」，
   // 后者每敲一个字符就会发一次 SFTP 请求（并弹一条错误 toast）
@@ -133,10 +140,12 @@ export function FilesPage() {
 
   return (
     <PageTransition>
-      <PageHeader title="文件" subtitle="SFTP 浏览、上传、下载与图片预览" />
+      <PageHeader eyebrow="Files" title="文件" subtitle="SFTP 浏览、上传、下载与图片预览" />
 
-      <div className="space-y-4">
-        <Card className="flex flex-wrap items-center gap-2 p-2.5">
+      <Card>
+        {/* 工具行即表格的标题栏：主机选择、路径与上传操作和目录列表同一张卡，一条分隔线。
+            空态/错误态留在卡内而不是整卡替换——主机 Select 是选主机的唯一入口，不能随空态一起消失 */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-border p-2.5">
           <Select
             className="w-full sm:w-52"
             value={host}
@@ -147,6 +156,7 @@ export function FilesPage() {
             }}
             options={(hosts.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
             placeholder="选择主机"
+            aria-label="选择主机"
           />
 
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -257,19 +267,19 @@ export function FilesPage() {
               上传
             </Button>
           </div>
-        </Card>
+        </div>
 
         {host == null ? (
           // min-h 保证空态是一块有分量的区域，而不是塌成一条缝
-          <Card className="flex min-h-[340px] items-center justify-center">
+          <div className="flex min-h-[340px] items-center justify-center">
             <EmptyState
               icon={<FolderOpen size={22} />}
               title="选择一台主机"
               description="选择主机后即可浏览其 SFTP 文件系统、上传与下载文件。"
             />
-          </Card>
+          </div>
         ) : query.isError ? (
-          <Card className="flex min-h-[340px] items-center justify-center">
+          <div className="flex min-h-[340px] items-center justify-center">
             <EmptyState
               icon={<WarningCircle size={22} className="text-danger" />}
               title="无法读取目录"
@@ -285,68 +295,66 @@ export function FilesPage() {
                 </Button>
               }
             />
-          </Card>
+          </div>
         ) : (
-          <Card>
-            <DataTable<FileEntry, string>
-              columns={[
-                {
-                  key: 'icon',
-                  title: '',
-                  className: 'w-10 pr-0',
-                  render: (entry) =>
-                    entry.directory ? (
-                      <FolderOpen size={17} weight="fill" className="text-accent" />
-                    ) : (
-                      <File size={17} className="text-faint" />
-                    ),
-                },
-                {
-                  key: 'name',
-                  title: '名称',
-                  render: (entry) => <span className="break-all">{entry.name}</span>,
-                },
-                {
-                  key: 'size',
-                  title: '大小',
-                  className: 'w-24 tabular-nums text-muted',
-                  render: (entry) =>
-                    entry.directory ? <span className="text-muted">—</span> : formatBytes(entry.size),
-                },
-                {
-                  key: 'mode',
-                  title: '权限',
-                  className: 'hidden md:table-cell w-28 font-mono text-[12px] text-muted',
-                  render: (entry) => entry.mode,
-                },
-                {
-                  key: 'mtime',
-                  title: '修改时间',
-                  className: 'hidden sm:table-cell w-44 tabular-nums text-muted',
-                  render: (entry) => formatTime(entry.mtime),
-                },
-              ]}
-              rows={query.data}
-              rowKey={(entry) => entry.name}
-              loading={query.isPending}
-              onRowClick={openEntry}
-              selection={{
-                selected,
-                onChange: setSelected,
-                // 目录不能下载，只允许勾选文件
-                isRowSelectable: (entry) => !entry.directory,
-              }}
-              empty={
-                <EmptyState
-                  icon={<FolderOpen size={22} />}
-                  title="目录为空"
-                  description="当前目录中没有文件或子目录。"
-                />
-              }
-            />
-          </Card>
+          <DataTable<FileEntry, string>
+            columns={[
+              {
+                key: 'icon',
+                title: '',
+                className: 'w-10 pr-0',
+                render: (entry) =>
+                  entry.directory ? (
+                    <FolderOpen size={17} weight="fill" className="text-accent" />
+                  ) : (
+                    <File size={17} className="text-faint" />
+                  ),
+              },
+              {
+                key: 'name',
+                title: '名称',
+                render: (entry) => <span className="break-all">{entry.name}</span>,
+              },
+              {
+                key: 'size',
+                title: '大小',
+                className: 'w-24 tabular-nums text-muted',
+                render: (entry) =>
+                  entry.directory ? <span className="text-muted">—</span> : formatBytes(entry.size),
+              },
+              {
+                key: 'mode',
+                title: '权限',
+                className: 'hidden md:table-cell w-28 font-mono text-[12px] text-muted',
+                render: (entry) => entry.mode,
+              },
+              {
+                key: 'mtime',
+                title: '修改时间',
+                className: 'hidden sm:table-cell w-44 tabular-nums text-muted',
+                render: (entry) => formatTime(entry.mtime),
+              },
+            ]}
+            rows={query.data}
+            rowKey={(entry) => entry.name}
+            loading={query.isPending}
+            onRowClick={openEntry}
+            selection={{
+              selected,
+              onChange: setSelected,
+              // 目录不能下载，只允许勾选文件
+              isRowSelectable: (entry) => !entry.directory,
+            }}
+            empty={
+              <EmptyState
+                icon={<FolderOpen size={22} />}
+                title="目录为空"
+                description="当前目录中没有文件或子目录。"
+              />
+            }
+          />
         )}
-      </div>
+      </Card>
 
       <SelectionBar
         count={selected.size}
@@ -376,7 +384,7 @@ export function FilesPage() {
           {preview && (
             <img
               src={preview}
-              className="w-full rounded-[12px] border border-border"
+              className="w-full rounded-container border border-border"
               alt="文件预览"
             />
           )}

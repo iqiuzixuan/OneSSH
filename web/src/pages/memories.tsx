@@ -1,9 +1,9 @@
-import { Brain, Database, MagnifyingGlass, Sparkle, Trash, WarningCircle } from '@phosphor-icons/react'
-import { useEffect, useId, useMemo, useState } from 'react'
+import { Brain, MagnifyingGlass, Trash, WarningCircle } from '@phosphor-icons/react'
+import { useEffect, useMemo, useState } from 'react'
 import { useDeleteMemories, useDeleteMemory, useHosts, useMemories, useMemoryStats } from '@/api/queries'
 import type { MemoryRow } from '@/api/types'
 import { ConfirmDialog } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
+import { Badge, HashBadge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -33,13 +33,37 @@ const VERACITY_LABEL: Record<string, string> = {
   unknown: '未知',
 }
 
-/** 记忆库是这一页唯一需要一眼分辨的维度，因此全页只给它上色：全局用强调色，主机库用描边 */
+/**
+ * 可信度是分类值，上徽章不裸文本：断言是 Agent 最确定的事实，用主题色；
+ * 推断次一等用蓝（与 Chip 的 info 同色系）；工具产出只是记录用描边；未知给警告色。
+ */
+const VERACITY_VARIANT = {
+  stated: 'accent',
+  inferred: 'info',
+  tool: 'outline',
+  unknown: 'warning',
+} as const
+
+function VeracityBadge({ value }: { value: string }) {
+  // title 保留后端原值，排障时不必回头翻映射表
+  return (
+    <Badge
+      variant={VERACITY_VARIANT[value as keyof typeof VERACITY_VARIANT] ?? 'default'}
+      title={value}
+    >
+      {VERACITY_LABEL[value] ?? value}
+    </Badge>
+  )
+}
+
+/** 记忆库徽章：全局库是唯一的语义色（accent）；主机库按库名哈希取色，同库同色、异库异色 */
 function BankBadge({ memory }: { memory: MemoryRow }) {
   if (memory.host_id == null) return <Badge variant="accent">全局</Badge>
+  const name = memory.host_name ?? `#${memory.host_id}`
   return (
-    <Badge variant="outline" title={`主机 #${memory.host_id}`}>
-      {memory.host_name ?? `#${memory.host_id}`}
-    </Badge>
+    <HashBadge value={name} title={`主机 #${memory.host_id}`}>
+      {name}
+    </HashBadge>
   )
 }
 
@@ -64,7 +88,6 @@ export function MemoriesPage() {
   const [deleting, setDeleting] = useState<MemoryRow | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [batchDeleting, setBatchDeleting] = useState(false)
-  const bankSelectId = useId()
 
   useEffect(() => {
     // 搜索走后端 LIKE：逐字符发请求既压网关也让列表反复重排，敲停 300ms 再查
@@ -131,6 +154,41 @@ export function MemoriesPage() {
     setOffset(0)
   }
 
+  // 一份筛选条同时驱动桌面表格与移动端卡片（hosts 模式：桌面融进表卡顶部，窄屏独立成卡）。
+  // 记忆库与搜索都走后端语义（host_id 精确匹配 / 防抖后的 LIKE），这里只负责摆布。
+  const filterControls = (
+    <>
+      <Select
+        aria-label="记忆库"
+        className="w-full sm:w-56"
+        value={bank}
+        onChange={(next) => {
+          setBank(next)
+          setOffset(0)
+        }}
+        options={bankOptions}
+      />
+      {/* 选中单个库时，把该库的统计摊在工具行内：省得为一行数字再起一块区域 */}
+      {selectedStat && (
+        <p className="px-1 text-[12px] text-muted tabular-nums sm:ml-auto">
+          本库 {selectedStat.count} 条
+          {selectedStat.last_written != null && ` · 最近写入 ${formatTime(selectedStat.last_written)}`}
+        </p>
+      )}
+      <div className={cn('w-full sm:w-64', !selectedStat && 'sm:ml-auto')}>
+        <Input
+          pill
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="搜索记忆正文"
+          aria-label="搜索记忆正文"
+          spellCheck={false}
+          prefix={<MagnifyingGlass size={14} />}
+        />
+      </div>
+    </>
+  )
+
   const columns: Column<MemoryRow>[] = [
     {
       key: 'content',
@@ -166,12 +224,7 @@ export function MemoriesPage() {
       key: 'veracity',
       title: '可信度',
       className: 'hidden w-[1%] whitespace-nowrap xl:table-cell',
-      // title 保留后端原值，排障时不必回头翻映射表
-      render: (memory) => (
-        <span className="text-[12px] text-muted" title={memory.veracity}>
-          {VERACITY_LABEL[memory.veracity] ?? memory.veracity}
-        </span>
-      ),
+      render: (memory) => <VeracityBadge value={memory.veracity} />,
     },
     {
       key: 'recall_count',
@@ -213,6 +266,7 @@ export function MemoriesPage() {
   return (
     <PageTransition>
       <PageHeader
+        eyebrow="Memories"
         title="记忆"
         subtitle="Agent 跨会话记住的运维事实 · 每台主机一个记忆库，另有一个全局库"
       />
@@ -228,58 +282,18 @@ export function MemoriesPage() {
           </Button>
         </Card>
       ) : stats.isLoading ? (
-        <Skeleton className="h-[92px] rounded-[12px] md:h-[104px]" />
+        <Skeleton className="h-[92px] rounded-container md:h-[104px]" />
       ) : (
         <StatGroup>
-          <StatCard title="记忆总数" value={totals.count} suffix="条" icon={<Brain size={16} />} />
-          <StatCard
-            title="记忆库"
-            value={stats.data?.length ?? 0}
-            suffix="个"
-            icon={<Database size={16} />}
-          />
-          <StatCard
-            title="已向量化"
-            value={totals.embedded}
-            suffix="条"
-            icon={<Sparkle size={16} />}
-          />
+          <StatCard title="记忆总数" value={totals.count} suffix="条" />
+          <StatCard title="记忆库" value={stats.data?.length ?? 0} suffix="个" />
+          <StatCard title="已向量化" value={totals.embedded} suffix="条" />
         </StatGroup>
       )}
 
-      <Card className="mt-4 flex flex-wrap items-center gap-2 p-2.5">
-        <label htmlFor={bankSelectId} className="sr-only">
-          记忆库
-        </label>
-        <Select
-          id={bankSelectId}
-          className="w-full sm:w-56"
-          value={bank}
-          onChange={(next) => {
-            setBank(next)
-            setOffset(0)
-          }}
-          options={bankOptions}
-        />
-
-        <div className="min-w-0 flex-1 sm:min-w-[200px]">
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="搜索记忆正文"
-            aria-label="搜索记忆正文"
-            spellCheck={false}
-            prefix={<MagnifyingGlass size={14} />}
-          />
-        </div>
-
-        {/* 选中单个库时，把该库的统计摊在筛选条右侧：省得为一行数字再起一块区域 */}
-        {selectedStat && (
-          <p className="px-1 text-[12px] text-muted tabular-nums">
-            本库 {selectedStat.count} 条
-            {selectedStat.last_written != null && ` · 最近写入 ${formatTime(selectedStat.last_written)}`}
-          </p>
-        )}
+      {/* 窄屏没有表头可融，筛选条保留独立卡片（hosts 模式） */}
+      <Card className="mt-4 flex flex-wrap items-center gap-2 p-2.5 md:hidden">
+        {filterControls}
       </Card>
 
       <div className="mt-4">
@@ -326,6 +340,10 @@ export function MemoriesPage() {
             )}
           >
             <Card className="hidden overflow-hidden md:block">
+              {/* 筛选条即表格的标题栏：同一张卡、一条分隔线（与主机页同一套语言） */}
+              <div className="flex items-center gap-2 border-b border-border p-2.5">
+                {filterControls}
+              </div>
               <DataTable
                 columns={columns}
                 rows={rows}
@@ -378,9 +396,7 @@ export function MemoriesPage() {
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <BankBadge memory={memory} />
                         <span className="font-mono text-[12px] text-muted">{memory.source}</span>
-                        <span className="text-[12px] text-muted" title={memory.veracity}>
-                          {VERACITY_LABEL[memory.veracity] ?? memory.veracity}
-                        </span>
+                        <VeracityBadge value={memory.veracity} />
                         <Importance value={memory.importance} />
                       </div>
                       <p className="mt-2.5 text-[12px] text-muted tabular-nums">

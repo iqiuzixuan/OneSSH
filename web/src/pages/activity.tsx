@@ -1,201 +1,31 @@
-import { Broadcast, MagnifyingGlass, Pulse } from '@phosphor-icons/react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { MagnifyingGlass, Pulse } from '@phosphor-icons/react'
 import { useMemo, useState } from 'react'
-import {
-  useAudit,
-  useAuditTools,
-  useHosts,
-  useTokens,
-  type AuditFilter,
-} from '@/api/queries'
-import type { Audit, StreamEvent } from '@/api/types'
-import { Badge, Dot } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useAudit, useAuditTools, type AuditFilter } from '@/api/queries'
+import type { Audit } from '@/api/types'
 import { CommandRunDetail, ParamsList } from '@/components/command-run-detail'
 import { CopyableBlock } from '@/components/copyable-block'
+import { Badge, Dot, HashBadge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { ColumnFilter } from '@/components/ui/column-filter'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
-import { MultiSelect } from '@/components/ui/multi-select'
 import { PageHeader } from '@/components/ui/page-header'
 import { PageTransition } from '@/components/ui/page-transition'
-import { Select } from '@/components/ui/select'
 import { Sheet } from '@/components/ui/sheet'
-import { useEventStream } from '@/hooks/use-event-stream'
 import { auditParamEntries, auditSummary, parseAuditParams } from '@/lib/audit'
 import { cn } from '@/lib/cn'
-import { formatBytes } from '@/lib/format'
+import { formatBytes, formatClock, formatDuration } from '@/lib/format'
 
-/** 审计与事件流的时间戳是「毫秒」，与 lib/format 的「秒」契约不同，故本页单独格式化 */
-const clock = (ms: number) => new Date(ms).toLocaleTimeString('zh-CN', { hour12: false })
-
-/** 结果筛选仍是单选（只有成功/失败两个值），故保留 'all' 哨兵；工具/令牌/主机改为多选数组 */
-const ALL = 'all'
-const MAX_AUDIT_FILTER_VALUES = 100
-
-/** 列定义与渲染无关联状态，放模块级避免每次渲染重建 */
-const auditColumns: Column<Audit>[] = [
-  {
-    key: 'Ts',
-    title: '时间',
-    // 审计日志没有时间就失去一半价值，窄屏也保留，靠收紧单元格内边距让出空间
-    className: 'w-[84px] font-mono text-[12px] text-muted tabular-nums',
-    render: (item) => clock(item.Ts),
-  },
-  {
-    key: 'Tool',
-    title: '工具',
-    className: 'w-[7.5rem] font-mono text-[13px]',
-    render: (item) => (
-      <span className="block truncate" title={item.Tool}>
-        {item.Tool}
-      </span>
-    ),
-  },
-  {
-    key: 'ParamsJSON',
-    title: '调用',
-    // 这列才是「Agent 跑了什么」：命令、路径、检索式。固定布局下它不设宽度、吃掉剩余空间，
-    // 窄屏也留着，靠 truncate + title 看全句
-    render: (item) => {
-      const summary = auditSummary(item)
-      return (
-        <span className="block truncate font-mono text-[12px] text-muted" title={summary || undefined}>
-          {summary || '—'}
-        </span>
-      )
-    },
-  },
-  {
-    key: 'TokenName',
-    title: '调用令牌',
-    className: 'hidden w-[10rem] text-muted xl:table-cell',
-    render: (item) => {
-      const label = tokenLabel(item)
-      return (
-        <span className="block truncate" title={label}>
-          {label}
-        </span>
-      )
-    },
-  },
-  {
-    key: 'Host',
-    title: '主机',
-    className: 'hidden w-[9rem] lg:table-cell text-muted',
-    render: (item) => {
-      const host = item.Host?.Valid ? item.Host.String : '—'
-      return (
-        <span className="block truncate" title={host}>
-          {host}
-        </span>
-      )
-    },
-  },
-  {
-    key: 'OK',
-    title: '调用结果',
-    className: 'w-[80px]',
-    // 一屏几十行里全是绿 badge 会淹没真正需要注意的失败，成功态降级为中性文字 + 状态点
-    render: (item) =>
-      item.OK ? (
-        <span className="inline-flex items-center gap-1.5 text-[12px] text-muted">
-          <Dot className="text-success" />
-          成功
-        </span>
-      ) : (
-        <Badge variant="danger">失败</Badge>
-      ),
-  },
-  {
-    key: 'BytesOut',
-    title: '输出',
-    className: 'hidden lg:table-cell w-[88px] text-right text-muted tabular-nums',
-    render: (item) => (item.BytesOut ? formatBytes(item.BytesOut) : '—'),
-  },
-  {
-    key: 'DurationMS',
-    title: '耗时',
-    className: 'w-[92px] text-right tabular-nums',
-    // 四位数以上的毫秒既难读又会撑宽列，统一在 1s 处进位
-    render: (item) => formatDuration(item.DurationMS),
-  },
-]
+/** 退出码列的筛选值：审计没有逐调用的退出码，用调用结果 ok/fail 代替 */
+type ResultFilter = 'ok' | 'fail'
 
 function tokenLabel(item: Audit): string {
   const id = item.TokenID?.Valid ? `#${item.TokenID.Int64}` : ''
   if (item.TokenName?.Valid) return `${item.TokenName.String}${id ? ` · ${id}` : ''}`
   if (id) return `已删除令牌 · ${id}`
   return '系统'
-}
-
-function formatDuration(ms: number): string {
-  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(2)} s`
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value)
-}
-
-function EventPayload({ event }: { event: StreamEvent }) {
-  const data = event.data
-  if (event.type === 'tool_call' && isRecord(data)) {
-    const summary = typeof data.summary === 'string' ? data.summary : ''
-    const host = typeof data.host === 'string' ? data.host : ''
-    const duration = typeof data.duration_ms === 'number' ? formatDuration(data.duration_ms) : ''
-    const bits = [data.ok === false ? '失败' : '成功', host, duration].filter(Boolean)
-    return (
-      <div className="mt-1.5 space-y-1">
-        {summary ? (
-          <p className="font-mono text-[12px] leading-[1.6] break-words text-text">{summary}</p>
-        ) : null}
-        <p className="text-[12px] text-muted">{bits.join(' · ')}</p>
-      </div>
-    )
-  }
-  if (event.type === 'command_started' && isRecord(data)) {
-    const command = typeof data.command === 'string' ? data.command : ''
-    const host = typeof data.host === 'string' ? data.host : ''
-    const runID = typeof data.run_id === 'string' ? data.run_id.slice(0, 8) : ''
-    return (
-      <div className="mt-1.5 space-y-1">
-        <p className="font-mono text-[12px] leading-[1.6] break-words text-text">{command}</p>
-        <p className="text-[12px] text-muted">{['开始执行', host, runID].filter(Boolean).join(' · ')}</p>
-      </div>
-    )
-  }
-  if (event.type === 'command_output' && isRecord(data)) {
-    const content = typeof data.data === 'string' ? data.data : ''
-    const stream = typeof data.stream === 'string' ? data.stream : 'output'
-    const runID = typeof data.run_id === 'string' ? data.run_id.slice(0, 8) : ''
-    return (
-      <div className="mt-1.5">
-        <p className="mb-1 text-[11px] font-mono text-muted">
-          {[stream, runID].filter(Boolean).join(' · ')}
-        </p>
-        <pre className="max-h-24 overflow-auto font-mono text-[12px] leading-[1.6] break-words whitespace-pre-wrap text-text">
-          {content}
-        </pre>
-      </div>
-    )
-  }
-  if (event.type === 'command_finished' && isRecord(data)) {
-    const status = typeof data.status === 'string' ? data.status : ''
-    const exitCode = typeof data.exit_code === 'number' ? `退出码 ${data.exit_code}` : ''
-    const host = typeof data.host === 'string' ? data.host : ''
-    const runID = typeof data.run_id === 'string' ? data.run_id.slice(0, 8) : ''
-    return (
-      <p className="mt-1.5 text-[12px] text-muted">
-        {[status, exitCode, host, runID].filter(Boolean).join(' · ')}
-      </p>
-    )
-  }
-  return (
-    <pre className="mt-1.5 max-h-24 overflow-auto font-mono text-[12px] leading-[1.6] break-words whitespace-pre-wrap text-muted">
-      {JSON.stringify(event.data)}
-    </pre>
-  )
 }
 
 function AuditDetail({ item }: { item: Audit }) {
@@ -293,23 +123,25 @@ function AuditSheetContent({ item }: { item: Audit }) {
 }
 
 export function ActivityPage() {
-  const { events, status } = useEventStream()
-  const [tool, setTool] = useState<string[]>([])
-  const [token, setToken] = useState<number[]>([])
-  const [host, setHost] = useState<string[]>([])
-  const [result, setResult] = useState(ALL)
+  // 类型是精确工具名（几十种），筛选走列头漏斗而不是平铺控件；退出码筛调用结果
+  const [filterTools, setFilterTools] = useState<string[]>([])
+  const [filterResult, setFilterResult] = useState<ResultFilter | null>(null)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Audit | null>(null)
+  const auditTools = useAuditTools()
+
+  // 只用全量工具清单做选项，不并入当前页数据——否则 filter→audit→工具清单会绕成循环
+  const toolOptions = useMemo(
+    () => [...(auditTools.data ?? [])].map((name) => ({ value: name, label: name })),
+    [auditTools.data],
+  )
+
   const filter: AuditFilter = {
-    tool,
-    token,
-    host,
-    ok: result === ALL ? undefined : result === 'ok',
+    tool: filterTools,
+    ok: filterResult == null ? undefined : filterResult === 'ok',
   }
   const audit = useAudit(filter)
-  const auditTools = useAuditTools()
-  const hosts = useHosts()
-  const tokens = useTokens()
+
   const needle = query.trim().toLowerCase()
   const rows = useMemo(() => {
     const list = audit.data ?? []
@@ -320,200 +152,183 @@ export function ActivityPage() {
       return hay.toLowerCase().includes(needle)
     })
   }, [audit.data, needle])
-  const filtered = tool.length > 0 || token.length > 0 || host.length > 0 || result !== ALL || needle !== ''
+  const filtered = filterTools.length > 0 || filterResult != null || needle !== ''
 
-  // 全量列表请求加载或失败时仍从当前审计结果回退；已选项也始终保留在选项中。
-  const toolNames = new Set(auditTools.data ?? [])
-  for (const row of audit.data ?? []) toolNames.add(row.Tool)
-  for (const name of tool) toolNames.add(name)
-  const toolOptions = [...toolNames].sort().map((name) => ({ value: name, label: name }))
-
-  const reduceMotion = useReducedMotion()
-  /**
-   * 后端 SSE 在推出第一条事件前不会 flush 响应头，浏览器的 readyState 会长期停在
-   * CONNECTING、onopen 迟迟不触发——对用户来说「已订阅但还没事件」与「已连接」是同一件事，
-   * 因此展示层只区分「监听中 / 已断开」。
-   */
-  const broken = status === 'error'
+  // 列头挂着筛选控件，列定义随筛选状态重建；单元格渲染本身无状态
+  const auditColumns: Column<Audit>[] = [
+    {
+      key: 'Ts',
+      title: '时间',
+      // 审计日志没有时间就失去一半价值，窄屏也保留，靠收紧单元格内边距让出空间
+      className: 'w-[84px] font-mono text-[11px] text-faint tabular-nums',
+      render: (item) => formatClock(item.Ts),
+    },
+    {
+      key: 'Tool',
+      title: (
+        <span className="inline-flex items-center gap-1.5">
+          类型
+          <ColumnFilter
+            multi
+            optionBadge
+            aria-label="按类型筛选"
+            value={filterTools}
+            onChange={setFilterTools}
+            options={toolOptions}
+          />
+          {filterTools.length > 0 && (
+            <span className="rounded-full bg-accent-soft px-1.5 text-[10px] font-semibold text-accent-ink tabular-nums">
+              {filterTools.length}
+            </span>
+          )}
+        </span>
+      ),
+      className: 'w-[12rem]',
+      // 工具名按值哈希取色：同一个工具永远同一个颜色，不同的工具几乎必然不同色
+      render: (item) => (
+        <HashBadge value={item.Tool} className="font-mono text-[10.5px]">
+          {item.Tool}
+        </HashBadge>
+      ),
+    },
+    {
+      key: 'Host',
+      title: '主机 / 主体',
+      className: 'hidden w-[10rem] text-muted sm:table-cell',
+      render: (item) => {
+        const host = item.Host?.Valid ? item.Host.String : '—'
+        return (
+          <span className="block truncate" title={host}>
+            {host}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'ParamsJSON',
+      title: '命令 · 详情',
+      // 这列才是「Agent 跑了什么」：命令、路径、检索式。固定布局下它不设宽度、吃掉剩余空间，
+      // 窄屏也留着，靠 truncate + title 看全句
+      render: (item) => {
+        const summary = auditSummary(item)
+        return (
+          <span className="block truncate font-mono text-[11.5px]" title={summary || undefined}>
+            {summary || '—'}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'OK',
+      title: (
+        <span className="inline-flex items-center gap-1.5">
+          退出码
+          <ColumnFilter
+            aria-label="按结果筛选"
+            allLabel="全部结果"
+            value={filterResult}
+            onChange={setFilterResult}
+            options={[
+              { value: 'ok', label: 'ok' },
+              { value: 'fail', label: 'fail' },
+            ]}
+          />
+          {filterResult && <span className="font-mono text-[10px] text-accent-ink">{filterResult}</span>}
+        </span>
+      ),
+      className: 'w-[76px] font-mono text-[12px]',
+      // 成功是主题色 ok、失败是加粗红 fail；审计没有逐调用的退出码，用结果代替
+      render: (item) =>
+        item.OK ? (
+          <span className="text-accent-ink">ok</span>
+        ) : (
+          <span className="font-semibold text-danger">fail</span>
+        ),
+    },
+    {
+      key: 'TokenName',
+      title: '令牌',
+      className: 'hidden w-[10rem] text-muted lg:table-cell',
+      render: (item) => {
+        const label = tokenLabel(item)
+        return (
+          <span className="block truncate" title={label}>
+            {label}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'DurationMS',
+      title: '耗时',
+      className: 'hidden w-[88px] text-right tabular-nums text-muted xl:table-cell',
+      render: (item) => formatDuration(item.DurationMS),
+    },
+  ]
 
   return (
     <PageTransition>
-      <PageHeader title="活动与审计" subtitle="实时事件、每次工具调用及关联的命令输出" />
+      <PageHeader
+        eyebrow="Activity"
+        title="活动留痕"
+        subtitle="每次调用的结果与输出，失败同样留痕"
+      />
 
-      {/* 两栏在 xl 起固定为一屏高：事件与审计都是「持续刷新的流」，各自内部滚动比把页面拉成几千像素更好用 */}
-      <div className="grid gap-4 xl:h-[calc(100dvh-11.5rem)] xl:min-h-[520px] xl:grid-cols-[2fr_3fr]">
-        <Card className="flex max-h-[60dvh] min-h-0 min-w-0 flex-col xl:max-h-none">
-          <CardHeader>
-            <CardTitle>实时事件</CardTitle>
-            <span
-              className={cn(
-                'flex items-center gap-1.5 text-[12px]',
-                broken ? 'text-danger' : 'text-success',
-              )}
-            >
-              <Dot pulse={!broken} />
-              {broken ? '已断开' : '监听中'}
-              {events.length > 0 && (
-                <span className="text-muted tabular-nums">· {events.length} 条</span>
-              )}
-            </span>
-          </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
-            {events.length === 0 ? (
-              <EmptyState
-                className="m-auto [&_p]:text-balance"
-                icon={<Broadcast size={22} />}
-                title="等待事件…"
-                description="工具调用与后台任务状态会在发生的瞬间推送到这里。"
-              />
-            ) : (
-              <AnimatePresence initial={false}>
-                {events.map((event) => (
-                  <motion.article
-                    key={event.id}
-                    className="shrink-0 rounded-[8px] bg-surface-2 px-3 py-2.5"
-                    initial={reduceMotion ? false : { opacity: 0, y: -6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.18, ease: 'easeOut' }}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <Badge variant="outline" className="font-mono">
-                        {event.type}
-                      </Badge>
-                      <time
-                        dateTime={new Date(event.ts).toISOString()}
-                        className="text-[12px] text-muted tabular-nums"
-                      >
-                        {clock(event.ts)}
-                      </time>
-                    </div>
-                    {/*
-                      tool_call 与 command_* 展示人能直接阅读的摘要和输出；未知事件才回退 JSON。
-                    */}
-                    <EventPayload event={event} />
-                  </motion.article>
-                ))}
-              </AnimatePresence>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="flex max-h-[60dvh] min-h-0 min-w-0 flex-col xl:max-h-none">
-          <CardHeader>
-            <CardTitle>审计与命令记录</CardTitle>
-            {audit.data && audit.data.length > 0 && (
-              <span className="text-[12px] text-muted tabular-nums">
-                {filtered ? `筛选出 ${rows.length} 条` : `最近 ${rows.length} 条`}
-              </span>
-            )}
-          </CardHeader>
-          {/* 工具/令牌/主机支持多选 + 搜索；结果仅两个值，保留单选下拉；改动即查，不设「查询」按钮 */}
-          <div className="grid grid-cols-2 gap-2 border-b border-border p-3 lg:grid-cols-4">
-            <div className="col-span-2 lg:col-span-4">
-              <label htmlFor="audit-filter-query" className="sr-only">
-                搜索命令或参数
-              </label>
-              <Input
-                id="audit-filter-query"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索命令、路径或参数…"
-                spellCheck={false}
-                prefix={<MagnifyingGlass size={14} />}
-              />
-            </div>
-            <label htmlFor="audit-filter-tool" className="sr-only">
-              按工具筛选
+      <Card className="overflow-hidden">
+        {/* 检索栏即表格的标题栏：与表格同一张卡、一条分隔线（与主机/任务页同一套语言）。
+            类型/结果这类列级维度收进列头漏斗，工具行只留全局搜索框 */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-border p-2.5">
+          <div className="ml-auto w-full sm:w-60">
+            <label htmlFor="audit-filter-query" className="sr-only">
+              搜索命令或参数
             </label>
-            <MultiSelect
-              id="audit-filter-tool"
-              value={tool}
-              onChange={setTool}
-              placeholder="全部工具"
-              searchPlaceholder="搜索工具…"
-              options={toolOptions}
-              maxSelected={MAX_AUDIT_FILTER_VALUES}
-            />
-            <label htmlFor="audit-filter-token" className="sr-only">
-              按调用令牌筛选
-            </label>
-            <MultiSelect
-              id="audit-filter-token"
-              value={token}
-              onChange={setToken}
-              placeholder="全部令牌"
-              searchPlaceholder="搜索令牌…"
-              options={(tokens.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
-              maxSelected={MAX_AUDIT_FILTER_VALUES}
-            />
-            <label htmlFor="audit-filter-host" className="sr-only">
-              按主机筛选
-            </label>
-            <MultiSelect
-              id="audit-filter-host"
-              value={host}
-              onChange={setHost}
-              placeholder="全部主机"
-              searchPlaceholder="搜索主机…"
-              options={(hosts.data ?? []).map((item) => ({ value: item.name, label: item.name }))}
-              maxSelected={MAX_AUDIT_FILTER_VALUES}
-            />
-            <label htmlFor="audit-filter-result" className="sr-only">
-              按结果筛选
-            </label>
-            <Select
-              id="audit-filter-result"
-              value={result}
-              onChange={setResult}
-              options={[
-                { value: ALL, label: '全部结果' },
-                { value: 'ok', label: '成功' },
-                { value: 'fail', label: '失败' },
-              ]}
+            <Input
+              pill
+              id="audit-filter-query"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索命令、路径或参数…"
+              spellCheck={false}
+              prefix={<MagnifyingGlass size={14} />}
             />
           </div>
-          <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-            <DataTable
-              stickyHeader
-              // 固定布局：审计数据持续刷新，auto 布局下列宽随内容跳动、长命令会把时间/结果列挤变形；
-              // 固定后列宽稳定，超长内容只在各自单元格内截断
-              fixedLayout
-              // 表格自身即滚动容器（overflow-x-auto 会让 y 轴一并变成 auto）；窄屏收紧单元格内边距，
-              // 让「时间」列不用被砍掉也能塞下四列
-              className={cn(
-                'min-h-0 flex-1 transition-opacity duration-150 [&_td]:px-3 [&_th]:px-3 sm:[&_td]:px-4 sm:[&_th]:px-4',
-                audit.isPlaceholderData && 'opacity-60',
-              )}
-              columns={auditColumns}
-              rows={rows}
-              rowKey={(item) => item.ID}
-              loading={audit.isLoading}
-              onRowClick={setSelected}
-              empty={
-                filtered ? (
-                  <EmptyState
-                    className="[&_p]:text-balance"
-                    icon={<Pulse size={22} />}
-                    title="没有匹配的审计记录"
-                    description={
-                      needle
-                        ? '当前已加载的记录里没有匹配的命令或参数，调整关键词再试。'
-                        : '当前筛选条件下暂无记录，调整条件再试。'
-                    }
-                  />
-                ) : (
-                  <EmptyState
-                    className="[&_p]:text-balance"
-                    icon={<Pulse size={22} />}
-                    title="暂无审计记录"
-                    description="Agent 通过 MCP 网关调用工具后，每一次调用都会记录在这里。点开一行可看完整命令和参数。"
-                  />
-                )
-              }
-            />
-          </CardContent>
-        </Card>
-      </div>
+        </div>
+        <DataTable
+          // 固定布局：审计数据持续刷新，auto 布局下列宽随内容跳动、长命令会把时间/结果列挤变形；
+          // 固定后列宽稳定，超长内容只在各自单元格内截断
+          fixedLayout
+          className={cn(
+            'transition-opacity duration-150',
+            audit.isPlaceholderData && 'opacity-60',
+          )}
+          columns={auditColumns}
+          rows={rows}
+          rowKey={(item) => item.ID}
+          loading={audit.isLoading}
+          onRowClick={setSelected}
+          empty={
+            filtered ? (
+              <EmptyState
+                className="[&_p]:text-balance"
+                icon={<Pulse size={22} />}
+                title="没有匹配的审计记录"
+                description={
+                  needle
+                    ? '当前已加载的记录里没有匹配的命令或参数，调整关键词再试。'
+                    : '当前筛选条件下暂无记录，调整条件再试。'
+                }
+              />
+            ) : (
+              <EmptyState
+                className="[&_p]:text-balance"
+                icon={<Pulse size={22} />}
+                title="暂无审计记录"
+                description="Agent 通过 MCP 网关调用工具后，每一次调用都会记录在这里。点开一行可看完整命令和参数。"
+              />
+            )
+          }
+        />
+      </Card>
 
       <Sheet
         open={selected != null}
@@ -527,7 +342,7 @@ export function ActivityPage() {
             <div>
               <p className="truncate text-sm font-semibold text-text">{selected.Tool}</p>
               <p className="mt-0.5 truncate text-[12px] text-muted">
-                {clock(selected.Ts)}
+                {formatClock(selected.Ts)}
                 {selected.Host?.Valid ? ` · ${selected.Host.String}` : ''}
               </p>
             </div>

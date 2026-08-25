@@ -4,7 +4,8 @@ import { Skeleton } from './skeleton'
 
 export type Column<T> = {
   key: string
-  title: string
+  /** 一般是文字；需要列头内联筛选（ColumnFilter 漏斗）时传 ReactNode */
+  title: React.ReactNode
   /** 同时作用于 th 与 td，用于列宽、对齐与响应式隐藏（如 hidden md:table-cell） */
   className?: string
   render?: (row: T) => React.ReactNode
@@ -74,7 +75,7 @@ export function DataTable<T, K extends string | number = string | number>({
           分隔线因此挂在单元格而不是 tr 上——两种模式渲染结果一致，不必分叉 */}
       <table
         className={cn(
-          'w-full border-separate border-spacing-0 text-sm',
+          'w-full border-separate border-spacing-0 text-[12.5px]',
           fixedLayout && 'table-fixed',
           showEmpty && 'hidden',
         )}
@@ -85,7 +86,7 @@ export function DataTable<T, K extends string | number = string | number>({
               <th
                 scope="col"
                 className={cn(
-                  'w-10 border-b border-border py-2.5 pr-0 pl-4',
+                  'w-10 border-b border-border py-[11px] pr-0 pl-4',
                   stickyHeader && 'sticky top-0 z-10 bg-surface',
                 )}
               >
@@ -102,7 +103,7 @@ export function DataTable<T, K extends string | number = string | number>({
                 key={c.key}
                 scope="col"
                 className={cn(
-                  'border-b border-border px-4 py-2.5 text-left text-[11px] font-medium tracking-wide whitespace-nowrap text-muted uppercase',
+                  'border-b border-border px-4 py-[11px] text-left text-[10.5px] font-semibold tracking-[0.1em] whitespace-nowrap text-faint uppercase',
                   stickyHeader && 'sticky top-0 z-10 bg-surface',
                   c.className,
                 )}
@@ -117,12 +118,12 @@ export function DataTable<T, K extends string | number = string | number>({
             Array.from({ length: 4 }, (_, i) => (
               <tr key={`skeleton-${i}`} className="[&:last-child>td]:border-b-0">
                 {selection && (
-                  <td className="border-b border-border py-3 pr-0 pl-4">
+                  <td className="border-b border-surface-2 py-3 pr-0 pl-4">
                     <Skeleton className="size-4" />
                   </td>
                 )}
                 {columns.map((c) => (
-                  <td key={c.key} className={cn('border-b border-border px-4 py-3', c.className)}>
+                  <td key={c.key} className={cn('border-b border-surface-2 px-4 py-3', c.className)}>
                     <Skeleton className="h-4 w-2/3" />
                   </td>
                 ))}
@@ -150,14 +151,14 @@ export function DataTable<T, K extends string | number = string | number>({
                   'transition-colors [&:last-child>td]:border-b-0',
                   onRowClick
                     ? 'cursor-pointer hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none'
-                    : 'hover:bg-surface-2/60',
-                  selection?.selected.has(rowKey(row)) && 'bg-accent/5',
+                    : 'hover:bg-surface-2',
+                  selection?.selected.has(rowKey(row)) && 'bg-accent-soft/60',
                 )}
               >
                 {selection && (
                   // 勾选不触发行点击（如文件页的进入目录/下载）
                   <td
-                    className="border-b border-border py-3 pr-0 pl-4"
+                    className="border-b border-surface-2 py-3 pr-0 pl-4"
                     onClick={(event) => event.stopPropagation()}
                   >
                     <Checkbox
@@ -171,7 +172,7 @@ export function DataTable<T, K extends string | number = string | number>({
                 {columns.map((c) => (
                   <td
                     key={c.key}
-                    className={cn('border-b border-border px-4 py-3 align-middle text-text', c.className)}
+                    className={cn('border-b border-surface-2 px-4 py-3 align-middle text-text', c.className)}
                   >
                     {c.render ? c.render(row) : String((row as Record<string, unknown>)[c.key] ?? '')}
                   </td>

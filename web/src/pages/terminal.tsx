@@ -1,32 +1,37 @@
 import { Terminal as TerminalIcon } from '@phosphor-icons/react'
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useHosts } from '@/api/queries'
-import { Dot } from '@/components/ui/badge'
+import { Chip } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PageHeader } from '@/components/ui/page-header'
 import { PageTransition } from '@/components/ui/page-transition'
 import { Select } from '@/components/ui/select'
 import { useTerminal, type TerminalStatus } from '@/hooks/use-terminal'
-import { cn } from '@/lib/cn'
 
-const statusPresentation: Record<
-  TerminalStatus,
-  { label: string; className: string; pulse?: boolean }
-> = {
-  idle: { label: '未连接', className: 'text-faint' },
-  connecting: { label: '正在握手', className: 'text-warning', pulse: true },
-  connected: { label: '已连接', className: 'text-success', pulse: true },
-  closed: { label: '已断开', className: 'text-muted' },
-  error: { label: '连接失败', className: 'text-danger' },
+/** 窗口栏右侧的状态小签，措辞对齐 demo 的 connected chip */
+const statusChip: Record<TerminalStatus, { label: string; tone: 'neutral' | 'accent' | 'warning' | 'danger' }> = {
+  idle: { label: 'idle', tone: 'neutral' },
+  connecting: { label: 'linking', tone: 'warning' },
+  connected: { label: 'connected', tone: 'accent' },
+  closed: { label: 'closed', tone: 'neutral' },
+  error: { label: 'error', tone: 'danger' },
 }
 
 export function TerminalPage() {
   const { data: hosts = [], isLoading } = useHosts()
-  const [host, setHost] = useState<string>()
-  const { mountRef, status, connect, disconnect } = useTerminal()
-  const current = statusPresentation[status]
+  // 主机卡「终端」按钮经 ?host=<name> 深链进来，进页即预选中
+  const [searchParams] = useSearchParams()
+  const [host, setHost] = useState<string | undefined>(() => searchParams.get('host') ?? undefined)
+  const { mountRef, status, size, connect, disconnect } = useTerminal()
+  const chip = statusChip[status]
+  const selected = hosts.find((item) => item.name === host)
+
+  // demo 的窗口标题串：user@host — via onessh gateway · 80×24
+  const title = host
+    ? `${selected?.username ?? ''}@${host} — via onessh gateway${size ? ` · ${size.cols}×${size.rows}` : ''}`
+    : 'onessh gateway terminal'
 
   return (
     // 终端页锁定视口高度：工具条固定、终端吃满剩余空间，整页不产生外层滚动。
@@ -35,54 +40,65 @@ export function TerminalPage() {
       <PageTransition>
         <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-4 md:px-8">
           <div className="shrink-0 [&>div]:mb-0">
-            <PageHeader title="交互终端" />
+            <PageHeader
+              eyebrow="Terminal"
+              title="交互终端"
+              subtitle="经网关的 WebSocket 会话，全程审计"
+              actions={
+                <>
+                  <Select
+                    value={host}
+                    onChange={setHost}
+                    options={hosts.map((item) => ({ value: item.name, label: item.name }))}
+                    placeholder="选择主机"
+                    disabled={isLoading}
+                    className="w-44"
+                    aria-label="选择主机"
+                  />
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      if (host) void connect(host)
+                    }}
+                    disabled={!host || status === 'connecting'}
+                    loading={status === 'connecting'}
+                  >
+                    {status === 'connected' ? '重新连接' : '连接'}
+                  </Button>
+                  {(status === 'connecting' || status === 'connected') && (
+                    <Button variant="ghost" size="sm" onClick={disconnect}>
+                      {status === 'connecting' ? '取消' : '断开'}
+                    </Button>
+                  )}
+                </>
+              }
+            />
           </div>
 
-          <Card className="flex shrink-0 flex-wrap items-center gap-2 p-2.5">
-            <Select
-              value={host}
-              onChange={setHost}
-              options={hosts.map((item) => ({ value: item.name, label: item.name }))}
-              placeholder="选择主机"
-              disabled={isLoading}
-              className="w-full sm:w-56"
-            />
-            <Button
-              variant="primary"
-              onClick={() => {
-                if (host) void connect(host)
-              }}
-              disabled={!host || status === 'connecting'}
-              loading={status === 'connecting'}
-            >
-              {status === 'connected' ? '重新连接' : '连接'}
-            </Button>
-            {(status === 'connecting' || status === 'connected') && (
-              <Button variant="ghost" onClick={disconnect}>
-                {status === 'connecting' ? '取消' : '断开'}
-              </Button>
-            )}
-            <span
-              className={cn('ml-auto inline-flex items-center gap-2 text-[13px]', current.className)}
-              aria-live="polite"
-            >
-              <Dot pulse={current.pulse} />
-              {current.label}
-            </span>
-          </Card>
-
           {/*
-            终端恒为深底（终端惯例，不跟随主题）。深底由内层的 .dark 提供而不是写死 #0b0d10：
-            令牌整体切到深色档，底色即 --bg(#0b0d10)，内部文字/图标也一并拿到深底上
-            可读的颜色——浅色主题下空态文字才不会糊成一片。
-            外层 section 留在页面自身的主题里，用与其它卡片同一套边框和阴影收边，
-            这块黑色才是版面里的一块「屏幕」，而不是一个突兀的黑洞。
+            终端卡 = 窗口（demo 的 .ttybox）：栏内只有红绿灯、等宽会话标题与状态小签，
+            操作全部上移到页头。屏幕恒为深底（终端惯例，不跟随主题），深底由内层 .dark
+            令牌档提供而不是写死 #0b0d10。
           */}
           <section
-            className="relative min-h-0 flex-1 overflow-hidden rounded-[12px] border border-border shadow-card"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-container border border-border bg-surface shadow-card"
             aria-label="终端会话"
           >
-            <div className="dark relative h-full w-full bg-bg p-2">
+            <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-surface-2 px-3.5 py-2.5">
+              <span aria-hidden className="mr-1 flex gap-1.5">
+                <i className="size-[11px] rounded-full bg-[#f5655b]" />
+                <i className="size-[11px] rounded-full bg-[#f6bd4f]" />
+                <i className="size-[11px] rounded-full bg-[#43c465]" />
+              </span>
+              <span className="truncate font-mono text-[11.5px] text-muted" aria-live="polite">
+                {title}
+              </span>
+              <Chip tone={chip.tone} className="ml-auto">
+                {chip.label}
+              </Chip>
+            </div>
+            <div className="dark relative min-h-0 flex-1 bg-bg p-2">
               <div ref={mountRef} className="h-full w-full" />
               {status === 'idle' && (
                 // 不吃指针事件；bg-bg 与终端同色，取消连接回到 idle 时能盖住上一次会话的残留输出
@@ -92,8 +108,8 @@ export function TerminalPage() {
                     title={host ? `准备连接 ${host}` : '选择一台主机开始会话'}
                     description={
                       host
-                        ? '点击「连接」建立 PTY 会话，输入内容会直接送往远端 shell。'
-                        : '在上方选择主机后即可建立交互式 SSH 会话。'
+                        ? '点击右上角「连接」建立 PTY 会话，输入内容会直接送往远端 shell。'
+                        : '在右上角选择主机后即可建立交互式 SSH 会话。'
                     }
                   />
                 </div>

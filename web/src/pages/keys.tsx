@@ -96,6 +96,7 @@ export function KeysPage() {
   return (
     <PageTransition>
       <PageHeader
+        eyebrow="Keys"
         title="密钥"
         subtitle="OpenSSH ed25519 生成与私钥导入"
         actions={
@@ -109,7 +110,7 @@ export function KeysPage() {
       {keys.isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 3 }, (_, index) => (
-            <Skeleton key={index} className="h-[173px] rounded-[12px]" />
+            <Skeleton key={index} className="h-[173px] rounded-container" />
           ))}
         </div>
       ) : keys.data?.length ? (
@@ -168,7 +169,7 @@ export function KeysPage() {
                       <Trash size={16} />
                     </Button>
                   </div>
-                  <div className="relative mt-3 grow rounded-[8px] bg-surface-2 p-3 pr-11">
+                  <div className="relative mt-3 grow rounded-control bg-surface-2 p-3 pr-11">
                     <p className="font-mono text-[11px] text-muted">{algorithm}</p>
                     {/* select-all：单击即可整段选中，长 base64 手动拖选很痛苦 */}
                     <p className="mt-1 line-clamp-2 leading-[1.7] font-mono text-[12px] break-all text-text select-all">
@@ -195,17 +196,20 @@ export function KeysPage() {
           })}
         </motion.div>
       ) : (
-        <EmptyState
-          icon={<Key size={22} />}
-          title="还没有密钥"
-          description="生成一把 ed25519 密钥，或导入已有的 OpenSSH 私钥。"
-          action={
-            <Button variant="primary" onClick={openCreate}>
-              <Plus size={15} />
-              生成第一把密钥
-            </Button>
-          }
-        />
+        // 空态收进卡片层：与令牌/任务等页同一套「320px 居中空卡」语言，而不是漂在页面底色上
+        <Card className="flex min-h-[320px] items-center justify-center">
+          <EmptyState
+            icon={<Key size={22} />}
+            title="还没有密钥"
+            description="生成一把 ed25519 密钥，或导入已有的 OpenSSH 私钥。"
+            action={
+              <Button variant="primary" onClick={openCreate}>
+                <Plus size={15} />
+                生成第一把密钥
+              </Button>
+            }
+          />
+        </Card>
       )}
 
       <Dialog

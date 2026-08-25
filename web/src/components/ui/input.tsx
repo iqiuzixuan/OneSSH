@@ -5,10 +5,12 @@ export type InputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'pref
   /** 左侧图标槽 */
   prefix?: React.ReactNode
   invalid?: boolean
+  /** 全胶囊外形（demo 的搜索框）；表单录入仍用控件圆角，检索场景才传 */
+  pill?: boolean
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
-  { className, prefix, invalid, ...props },
+  { className, prefix, invalid, pill, ...props },
   ref,
 ) {
   const field = (
@@ -16,7 +18,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       ref={ref}
       aria-invalid={invalid || undefined}
       className={cn(
-        'h-9 w-full rounded-[8px] border bg-surface px-3 text-sm text-text',
+        'h-9 w-full border bg-surface px-3 text-sm text-text',
+        pill ? 'rounded-full' : 'rounded-control',
         'placeholder:text-faint transition-colors duration-150',
         'hover:border-border-strong focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none',
         'disabled:cursor-not-allowed disabled:opacity-60',

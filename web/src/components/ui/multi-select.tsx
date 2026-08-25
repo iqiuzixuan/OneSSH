@@ -112,7 +112,7 @@ export function MultiSelect<T extends string | number>({
           }
         }}
         className={cn(
-          'flex h-9 w-full items-center justify-between gap-2 overflow-hidden rounded-[8px] border bg-surface px-3 text-sm',
+          'flex h-9 w-full items-center justify-between gap-2 overflow-hidden rounded-control border bg-surface px-3 text-sm',
           'transition-colors duration-150 hover:border-border-strong',
           'focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none',
           invalid ? 'border-danger' : 'border-border',
@@ -142,7 +142,7 @@ export function MultiSelect<T extends string | number>({
         <PopoverPrimitive.Content
           align="start"
           sideOffset={6}
-          className="z-50 flex max-h-72 w-[var(--radix-popover-trigger-width)] min-w-56 flex-col overflow-hidden rounded-[12px] border border-border bg-surface shadow-pop"
+          className="z-50 flex max-h-72 w-[var(--radix-popover-trigger-width)] min-w-56 flex-col overflow-hidden rounded-container border border-border bg-surface shadow-pop"
         >
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <MagnifyingGlass size={14} className="shrink-0 text-faint" />
@@ -179,7 +179,7 @@ export function MultiSelect<T extends string | number>({
                 <label
                   key={String(o.value)}
                   className={cn(
-                    'flex items-center gap-2.5 rounded-[8px] px-2.5 py-1.5 text-sm text-text',
+                    'flex items-center gap-2.5 rounded-control px-2.5 py-1.5 text-sm text-text',
                     disabled
                       ? 'cursor-not-allowed opacity-50'
                       : 'cursor-pointer hover:bg-surface-2',
@@ -206,7 +206,7 @@ export function MultiSelect<T extends string | number>({
               <button
                 type="button"
                 onClick={create}
-                className="flex w-full cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-1.5 text-left text-sm text-text hover:bg-surface-2"
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left text-sm text-text hover:bg-surface-2"
               >
                 <Plus size={14} className="shrink-0 text-accent" />
                 <span className="truncate">{createText(q)}</span>

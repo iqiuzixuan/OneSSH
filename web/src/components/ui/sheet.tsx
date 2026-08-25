@@ -66,7 +66,7 @@ export function Sheet({
                   )}
                   <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
                   <DialogPrimitive.Close
-                    className="-mr-1 shrink-0 rounded-[8px] p-1 text-muted transition-colors hover:bg-surface-2 hover:text-text"
+                    className="-mr-1 shrink-0 rounded-control p-1 text-muted transition-colors hover:bg-surface-2 hover:text-text"
                     aria-label="关闭"
                   >
                     <X size={16} />

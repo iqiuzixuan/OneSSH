@@ -1,6 +1,7 @@
 import { DotsThree, HardDrives, MagnifyingGlass, Plus } from '@phosphor-icons/react'
 import { Controller, useForm } from 'react-hook-form'
 import { useEffect, useId, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
   useDeleteHost,
@@ -14,7 +15,7 @@ import {
 import type { Host, HostPayload } from '@/api/types'
 import { HostConnection } from '@/components/host-connection'
 import { ConfirmDialog } from '@/components/ui/alert-dialog'
-import { Badge, Dot } from '@/components/ui/badge'
+import { Dot, HashBadge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -31,11 +32,13 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ColumnFilter } from '@/components/ui/column-filter'
 import { MultiSelect } from '@/components/ui/multi-select'
 import { PageHeader } from '@/components/ui/page-header'
 import { PageTransition } from '@/components/ui/page-transition'
 import { Select } from '@/components/ui/select'
 import { SelectionBar } from '@/components/ui/selection-bar'
+import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/cn'
@@ -119,14 +122,14 @@ const MonitorCell = ({ host }: { host: Host }) => (
   </span>
 )
 
-/** 标签是分组属性而非状态：平铺徽章、允许换行，没有标签时用破折号留白 */
+/** 标签是分组属性而非状态：平铺徽章、允许换行，没有标签时用破折号留白；颜色按值哈希，同值同色 */
 const TagsCell = ({ host }: { host: Host }) =>
   host.tags.length > 0 ? (
     <span className="flex flex-wrap items-center gap-1">
       {host.tags.map((tag) => (
-        <Badge key={tag} variant="accent">
+        <HashBadge key={tag} value={tag}>
           {tag}
-        </Badge>
+        </HashBadge>
       ))}
     </span>
   ) : (
@@ -161,11 +164,9 @@ export function HostsPage() {
   // 列表一次拉全量且无服务端分页，过滤全部在前端本地做，改动即生效、不发请求
   const [query, setQuery] = useState('')
   const [filterTags, setFilterTags] = useState<string[]>([])
-  const [filterAuth, setFilterAuth] = useState<'all' | 'password' | 'key'>('all')
+  // 认证是列头单选漏斗：null 即「全部」；监控是高频维度，走工具行的分段控件
+  const [filterAuth, setFilterAuth] = useState<'password' | 'key' | null>(null)
   const [filterMonitor, setFilterMonitor] = useState<'all' | 'on' | 'off'>('all')
-  const tagFilterId = useId()
-  const authFilterId = useId()
-  const monitorFilterId = useId()
 
   /** 全部主机已有标签的去重集合，同时喂给过滤条与表单的可选项 */
   const allTags = useMemo(
@@ -183,7 +184,7 @@ export function HostsPage() {
         return false
       // 标签取「任一交集即命中」：多选是扩面而不是收窄
       if (filterTags.length > 0 && !host.tags.some((tag) => filterTags.includes(tag))) return false
-      if (filterAuth !== 'all' && host.auth_type !== filterAuth) return false
+      if (filterAuth && host.auth_type !== filterAuth) return false
       if (filterMonitor !== 'all' && host.monitor_enabled !== (filterMonitor === 'on')) return false
       return true
     })
@@ -210,6 +211,15 @@ export function HostsPage() {
     reset(emptyForm)
     setDialogOpen(true)
   }
+
+  // 顶栏「新建主机」与总览空态通过 ?new=1 深链进来：消费一次参数后立刻清掉，刷新不重复弹窗
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get('new') !== '1') return
+    openCreate()
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const openEdit = (host: Host) => {
     setEditing(host)
@@ -285,7 +295,27 @@ export function HostsPage() {
     },
     {
       key: 'auth_type',
-      title: '认证',
+      // 列头内联筛选：漏斗弹层即选即生效，激活后列名旁直接显示当前值
+      title: (
+        <span className="inline-flex items-center gap-1.5">
+          认证
+          <ColumnFilter
+            aria-label="按认证方式筛选"
+            value={filterAuth}
+            onChange={setFilterAuth}
+            options={[
+              { value: 'password', label: '密码' },
+              { value: 'key', label: 'SSH 密钥' },
+            ]}
+            allLabel="全部认证"
+          />
+          {filterAuth && (
+            <span className="font-medium tracking-normal text-accent-ink normal-case">
+              {filterAuth === 'key' ? 'SSH 密钥' : '密码'}
+            </span>
+          )}
+        </span>
+      ),
       className: 'w-[112px]',
       render: (host) => (
         <span className="text-[13px] text-muted">
@@ -295,7 +325,24 @@ export function HostsPage() {
     },
     {
       key: 'tags',
-      title: '标签',
+      title: (
+        <span className="inline-flex items-center gap-1.5">
+          标签
+          <ColumnFilter
+            multi
+            optionBadge
+            aria-label="按标签筛选"
+            value={filterTags}
+            onChange={setFilterTags}
+            options={allTags.map((tag) => ({ value: tag, label: tag }))}
+          />
+          {filterTags.length > 0 && (
+            <span className="font-medium tracking-normal text-accent-ink tabular-nums">
+              {filterTags.length}
+            </span>
+          )}
+        </span>
+      ),
       className: 'w-[168px]',
       render: (host) => <TagsCell host={host} />,
     },
@@ -358,7 +405,7 @@ export function HostsPage() {
           onClick={() => {
             setQuery('')
             setFilterTags([])
-            setFilterAuth('all')
+            setFilterAuth(null)
             setFilterMonitor('all')
           }}
         >
@@ -368,9 +415,60 @@ export function HostsPage() {
     />
   )
 
+  // 一份过滤条同时驱动桌面表格与移动端卡片。监控是最高频维度，平铺成分段控件；
+  // 桌面端标签/认证内联在列头漏斗里，窄屏是卡片列表没有列头，在这补两个入口。
+  const filterControls = (
+    <>
+      <Segmented
+        value={filterMonitor}
+        onChange={setFilterMonitor}
+        aria-label="按监控状态筛选"
+        options={[
+          { value: 'all', label: '全部' },
+          { value: 'on', label: '启用监控' },
+          { value: 'off', label: '未监控' },
+        ]}
+      />
+      <span className="flex items-center gap-1.5 text-[12px] text-muted md:hidden">
+        标签
+        <ColumnFilter
+          multi
+          optionBadge
+          aria-label="按标签筛选"
+          value={filterTags}
+          onChange={setFilterTags}
+          options={allTags.map((tag) => ({ value: tag, label: tag }))}
+        />
+        <span className="ml-1.5">认证</span>
+        <ColumnFilter
+          aria-label="按认证方式筛选"
+          value={filterAuth}
+          onChange={setFilterAuth}
+          options={[
+            { value: 'password', label: '密码' },
+            { value: 'key', label: 'SSH 密钥' },
+          ]}
+          allLabel="全部认证"
+        />
+      </span>
+      <div className="w-full sm:ml-auto sm:w-60">
+        <Input
+          pill
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索名称、地址或用户名"
+          aria-label="搜索名称、地址或用户名"
+          spellCheck={false}
+          prefix={<MagnifyingGlass size={14} />}
+        />
+      </div>
+    </>
+  )
+
   return (
     <PageTransition>
       <PageHeader
+        eyebrow="Hosts"
         title="主机"
         subtitle="SSH 目标、认证方式与 TOFU 指纹"
         actions={
@@ -381,62 +479,15 @@ export function HostsPage() {
         }
       />
 
-      {/* 一份过滤条同时驱动桌面表格与移动端卡片；窄屏下各项整行堆叠 */}
-      <Card className="mb-4 flex flex-wrap items-center gap-2 p-2.5">
-        <div className="min-w-0 flex-1 sm:min-w-[200px]">
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索名称、地址或用户名"
-            aria-label="搜索名称、地址或用户名"
-            spellCheck={false}
-            prefix={<MagnifyingGlass size={14} />}
-          />
-        </div>
-        <label htmlFor={tagFilterId} className="sr-only">
-          按标签筛选
-        </label>
-        <div className="w-full sm:w-44">
-          <MultiSelect
-            id={tagFilterId}
-            value={filterTags}
-            onChange={setFilterTags}
-            placeholder="全部标签"
-            searchPlaceholder="搜索标签…"
-            options={allTags.map((tag) => ({ value: tag, label: tag }))}
-          />
-        </div>
-        <label htmlFor={authFilterId} className="sr-only">
-          按认证方式筛选
-        </label>
-        <Select
-          id={authFilterId}
-          className="w-full sm:w-36"
-          value={filterAuth}
-          onChange={setFilterAuth}
-          options={[
-            { value: 'all', label: '全部认证' },
-            { value: 'password', label: '密码' },
-            { value: 'key', label: 'SSH 密钥' },
-          ]}
-        />
-        <label htmlFor={monitorFilterId} className="sr-only">
-          按监控状态筛选
-        </label>
-        <Select
-          id={monitorFilterId}
-          className="w-full sm:w-36"
-          value={filterMonitor}
-          onChange={setFilterMonitor}
-          options={[
-            { value: 'all', label: '全部监控' },
-            { value: 'on', label: '启用' },
-            { value: 'off', label: '关闭' },
-          ]}
-        />
+      <Card className="mb-4 flex flex-wrap items-center gap-2 p-2.5 md:hidden">
+        {filterControls}
       </Card>
 
       <Card className="hidden md:block">
+        {/* 检索栏即表格的标题栏：同一张卡、一条分隔线，不再是悬浮在表格上方的独立卡片 */}
+        <div className="flex items-center gap-2 border-b border-border p-2.5">
+          {filterControls}
+        </div>
         <DataTable
           columns={columns}
           rows={filtered}
@@ -740,7 +791,7 @@ export function HostsPage() {
             name="monitor_enabled"
             control={control}
             render={({ field }) => (
-              <div className="flex items-center justify-between gap-4 rounded-[8px] bg-surface-2 px-3 py-2.5 sm:col-span-6">
+              <div className="flex items-center justify-between gap-4 rounded-control bg-surface-2 px-3 py-2.5 sm:col-span-6">
                 <div className="space-y-0.5">
                   <Label htmlFor={monitorId}>资源监控</Label>
                   <p className="text-[12px] text-muted">定期采集 CPU、内存、负载与磁盘</p>

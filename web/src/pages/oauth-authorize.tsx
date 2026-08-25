@@ -323,7 +323,7 @@ export function OAuthAuthorizePage() {
                   </div>
 
                   <Section title="回调地址">
-                    <div className="rounded-[8px] border border-border bg-surface-2 px-3 py-2.5">
+                    <div className="rounded-control border border-border bg-surface-2 px-3 py-2.5">
                       {/* 窄屏把徽章挑到上一行：回调地址是这里最该被逐字读完的东西，不能被挤成两截 */}
                       <div className="flex flex-col gap-1.5 sm:flex-row-reverse sm:items-start sm:justify-between sm:gap-3">
                         <Badge
@@ -384,7 +384,7 @@ export function OAuthAuthorizePage() {
                   <Section title="主机权限">
                     <div className="space-y-3">
                       {/* 开关横排成设置行，与令牌创建表单完全同构，避免同一套权限出现两种界面 */}
-                      <div className="flex items-center justify-between gap-4 rounded-[8px] border border-border bg-surface-2 px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-4 rounded-control border border-border bg-surface-2 px-3 py-2.5">
                         <div className="min-w-0">
                           <Label htmlFor="oauth-all-hosts">允许全部主机</Label>
                           <p className="mt-0.5 text-[12px] leading-5 text-muted">
@@ -410,7 +410,7 @@ export function OAuthAuthorizePage() {
                         />
                       </div>
 
-                      <div className="flex items-center justify-between gap-4 rounded-[8px] border border-border bg-surface-2 px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-4 rounded-control border border-border bg-surface-2 px-3 py-2.5">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Label htmlFor="oauth-manage-hosts">允许管理主机</Label>
@@ -491,7 +491,7 @@ export function OAuthAuthorizePage() {
                   <div className="border-t border-border px-5 py-4 sm:px-6">
                     {/* 提交失败是服务端结果而不是字段校验，贴在按钮上方比 toast 更容易被看到 */}
                     {submitError && (
-                      <p className="mb-3 flex items-start gap-2 rounded-[8px] border border-danger/25 bg-danger/8 px-3 py-2 text-[12px] leading-5 text-danger">
+                      <p className="mb-3 flex items-start gap-2 rounded-control border border-danger/25 bg-danger/8 px-3 py-2 text-[12px] leading-5 text-danger">
                         <WarningCircle size={15} weight="fill" className="mt-px shrink-0" />
                         {submitError}
                       </p>

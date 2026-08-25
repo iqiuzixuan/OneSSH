@@ -54,7 +54,7 @@ export function LoginPage() {
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.28, ease: 'easeOut' }}
-        className="relative w-full max-w-[380px] rounded-[12px] border border-border bg-surface p-7 shadow-card sm:p-8"
+        className="relative w-full max-w-[380px] rounded-container border border-border bg-surface p-7 shadow-card sm:p-8"
       >
         <LogoTile className="size-10" />
         <h1 className="mt-5 text-[22px] leading-none font-semibold tracking-tight text-text">OneSSH</h1>
@@ -77,7 +77,7 @@ export function LoginPage() {
 
           {/* 登录失败是提交结果而不是字段校验，贴在按钮上方比 toast 更容易被看到 */}
           {error && (
-            <p className="flex items-start gap-2 rounded-[8px] border border-danger/25 bg-danger/8 px-3 py-2 text-[12px] leading-5 text-danger">
+            <p className="flex items-start gap-2 rounded-control border border-danger/25 bg-danger/8 px-3 py-2 text-[12px] leading-5 text-danger">
               <WarningCircle size={15} weight="fill" className="mt-px shrink-0" />
               {error}
             </p>

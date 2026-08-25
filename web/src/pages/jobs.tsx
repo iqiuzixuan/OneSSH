@@ -1,6 +1,13 @@
-import { ArrowClockwise, ArrowDown, Broadcast, FileText, WarningCircle } from '@phosphor-icons/react'
+import {
+  ArrowClockwise,
+  ArrowDown,
+  Broadcast,
+  FileText,
+  MagnifyingGlass,
+  WarningCircle,
+} from '@phosphor-icons/react'
 import { animate, motion, useMotionValue, useReducedMotion } from 'motion/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useJobLogs, useJobs, useKillJob, useKillJobs } from '@/api/queries'
 import type { JobStatus } from '@/api/types'
@@ -13,8 +20,10 @@ import { Code } from '@/components/ui/code'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { Dialog } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/ui/page-header'
 import { PageTransition } from '@/components/ui/page-transition'
+import { Segmented } from '@/components/ui/segmented'
 import { SelectionBar } from '@/components/ui/selection-bar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
@@ -47,6 +56,9 @@ function JobBadge({ status }: { status: string }) {
   )
 }
 
+/** 工具行分段控件的取值：exited/killed 都是「跑完了」，归并成一档，不与状态徽章的四值一一对应 */
+type StatusFilter = 'all' | 'running' | 'ended' | 'lost'
+
 function JobLogs({ job }: { job: JobStatus }) {
   const logs = useJobLogs(job.job.id, job.job.status === 'running')
   const content = logs.data?.pages.map((page) => page.content).join('') ?? ''
@@ -68,7 +80,7 @@ function JobLogs({ job }: { job: JobStatus }) {
           <span className="font-mono tabular-nums">退出码 {job.job.exit_code}</span>
         )}
       </div>
-      <pre className="max-h-[55dvh] min-h-40 overflow-auto rounded-[8px] bg-[#0d1117] px-3 py-2.5 font-mono text-[12px] leading-[1.6] break-words whitespace-pre-wrap text-[#d8dee9]">
+      <pre className="max-h-[55dvh] min-h-40 overflow-auto rounded-control bg-[#0d1117] px-3 py-2.5 font-mono text-[12px] leading-[1.6] break-words whitespace-pre-wrap text-[#d8dee9]">
         {content || (logs.isLoading ? '正在读取…' : '（暂无输出）')}
       </pre>
       {logs.hasNextPage && (
@@ -100,6 +112,24 @@ export function JobsPage() {
   const reduce = useReducedMotion()
   const fetching = useRef(false)
   const spinning = useRef(false)
+
+  // 状态是这页最高频的筛选维度，平铺成分段控件；检索按命令文本与 job id 在前端即时过滤
+  const [filterStatus, setFilterStatus] = useState<StatusFilter>('all')
+  const [query, setQuery] = useState('')
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return (jobs.data ?? []).filter((item) => {
+      if (filterStatus === 'running' && item.job.status !== 'running') return false
+      if (filterStatus === 'ended' && item.job.status !== 'exited' && item.job.status !== 'killed')
+        return false
+      if (filterStatus === 'lost' && item.job.status !== 'lost') return false
+      if (q && !`${item.job.command} ${item.job.id}`.toLowerCase().includes(q)) return false
+      return true
+    })
+  }, [jobs.data, filterStatus, query])
+
+  /** 列表本身非空、只是被过滤条件清空时，换一套空态文案引导清除条件 */
+  const narrowedToNothing = (jobs.data?.length ?? 0) > 0 && filtered.length === 0
 
   // 列表每 4 秒轮询：已退出/被终止的任务留在选中态只会误导下一次批量终止，随数据自动剔除
   useEffect(() => {
@@ -195,9 +225,58 @@ export function JobsPage() {
 
   const isEmpty = !jobs.isLoading && jobs.data?.length === 0
 
+  const noMatchState = (
+    <EmptyState
+      icon={<MagnifyingGlass size={22} />}
+      title="没有匹配过滤条件的任务"
+      description="换个关键词，或放宽状态筛选。"
+      action={
+        <Button
+          variant="outline"
+          onClick={() => {
+            setQuery('')
+            setFilterStatus('all')
+          }}
+        >
+          清除筛选
+        </Button>
+      }
+    />
+  )
+
+  // 一份过滤条同时驱动桌面表格与移动端卡片（hosts 模式：桌面融进表卡顶部，窄屏独立成卡）。
+  // 过滤只影响显示行：轮询剔除已结束任务的选中逻辑仍基于完整 jobs.data，不受筛选影响。
+  const filterControls = (
+    <>
+      <Segmented
+        value={filterStatus}
+        onChange={setFilterStatus}
+        aria-label="按状态筛选"
+        options={[
+          { value: 'all', label: '全部' },
+          { value: 'running', label: '运行中' },
+          { value: 'ended', label: '已结束' },
+          { value: 'lost', label: '已失联' },
+        ]}
+      />
+      <div className="w-full sm:ml-auto sm:w-60">
+        <Input
+          pill
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索命令或任务 ID"
+          aria-label="搜索命令或任务 ID"
+          spellCheck={false}
+          prefix={<MagnifyingGlass size={14} />}
+        />
+      </div>
+    </>
+  )
+
   return (
     <PageTransition>
       <PageHeader
+        eyebrow="Jobs"
         title="后台任务"
         subtitle="远程无驻留进程生命周期 · 每 4 秒自动刷新"
         actions={
@@ -241,12 +320,21 @@ export function JobsPage() {
         </Card>
       ) : (
         <>
+          <Card className="mb-4 flex flex-wrap items-center gap-2 p-2.5 md:hidden">
+            {filterControls}
+          </Card>
+
           <Card className="hidden overflow-hidden md:block">
+            {/* 检索栏即表格的标题栏：同一张卡、一条分隔线（与主机页同一套语言） */}
+            <div className="flex items-center gap-2 border-b border-border p-2.5">
+              {filterControls}
+            </div>
             <DataTable
               columns={columns}
-              rows={jobs.data}
+              rows={filtered}
               rowKey={(item) => item.job.id}
               loading={jobs.isLoading}
+              empty={narrowedToNothing ? noMatchState : undefined}
               selection={{
                 selected,
                 onChange: setSelected,
@@ -257,9 +345,10 @@ export function JobsPage() {
           </Card>
 
           <div className="space-y-3 md:hidden">
-            {jobs.isLoading
-              ? Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-[116px]" />)
-              : jobs.data?.map((item) => (
+            {jobs.isLoading ? (
+              Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-[116px]" />)
+            ) : filtered.length ? (
+              filtered.map((item) => (
                   <Card
                     key={item.job.id}
                     className={cn('p-4', selected.has(item.job.id) && 'border-accent')}
@@ -302,7 +391,10 @@ export function JobsPage() {
                       </div>
                     </div>
                   </Card>
-                ))}
+                ))
+            ) : (
+              <Card className="p-4">{noMatchState}</Card>
+            )}
           </div>
         </>
       )}

@@ -41,7 +41,7 @@ export function Dialog({
               <motion.div
                 className={cn(
                   'fixed top-1/2 left-1/2 z-50 flex max-h-[88dvh] w-[calc(100vw-2rem)] flex-col',
-                  'rounded-[12px] border border-border bg-surface shadow-pop focus:outline-none',
+                  'rounded-container border border-border bg-surface shadow-pop focus:outline-none',
                   widths[size],
                 )}
                 style={{ x: '-50%', y: '-50%' }}
@@ -64,7 +64,7 @@ export function Dialog({
                     )}
                   </div>
                   <DialogPrimitive.Close
-                    className="-mr-1 rounded-[8px] p-1 text-muted transition-colors hover:bg-surface-2 hover:text-text"
+                    className="-mr-1 rounded-control p-1 text-muted transition-colors hover:bg-surface-2 hover:text-text"
                     aria-label="关闭"
                   >
                     <X size={16} />

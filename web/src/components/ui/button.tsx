@@ -4,18 +4,18 @@ import { cn } from '@/lib/cn'
 import { Spinner } from './spinner'
 
 const button = cva(
-  'inline-flex items-center justify-center gap-2 rounded-[8px] font-medium whitespace-nowrap ' +
-    'transition-[background-color,border-color,color,transform,box-shadow] duration-150 ' +
+  'inline-flex items-center justify-center gap-2 rounded-full font-medium whitespace-nowrap ' +
+    'transition-[background-color,border-color,color,transform,box-shadow,filter] duration-150 ' +
     'active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ' +
     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
   {
     variants: {
       variant: {
-        primary: 'bg-accent text-accent-fg hover:bg-accent-hover',
+        primary: 'bg-accent-gradient text-accent-fg shadow-glow hover:brightness-110',
         secondary: 'bg-surface-2 text-text hover:bg-border',
         ghost: 'text-muted hover:bg-surface-2 hover:text-text',
         outline:
-          'border border-border bg-surface text-text hover:border-border-strong hover:bg-surface-2',
+          'border border-border bg-surface text-text hover:border-accent hover:bg-accent-soft hover:text-accent-ink',
         danger: 'bg-danger text-danger-fg hover:opacity-90',
       },
       size: {

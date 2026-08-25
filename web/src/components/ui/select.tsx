@@ -17,6 +17,7 @@ export function Select<T extends string | number>({
   disabled,
   id,
   invalid,
+  'aria-label': ariaLabel,
 }: {
   value: T | undefined
   onChange: (value: T) => void
@@ -26,6 +27,8 @@ export function Select<T extends string | number>({
   disabled?: boolean
   id?: string
   invalid?: boolean
+  /** 触发器的无障碍名：同一控件在桌面/移动各挂一份时用它在两处都能命名，避免共享 id */
+  'aria-label'?: string
 }) {
   const isNumeric = options.length > 0 && typeof options[0].value === 'number'
   return (
@@ -36,9 +39,10 @@ export function Select<T extends string | number>({
     >
       <SelectPrimitive.Trigger
         id={id}
+        aria-label={ariaLabel}
         aria-invalid={invalid || undefined}
         className={cn(
-          'inline-flex h-9 w-full items-center justify-between gap-2 rounded-[8px] border bg-surface px-3 text-sm text-text',
+          'inline-flex h-9 w-full items-center justify-between gap-2 rounded-control border bg-surface px-3 text-sm text-text',
           'transition-colors duration-150 hover:border-border-strong',
           'focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none',
           'disabled:cursor-not-allowed disabled:opacity-60 data-[placeholder]:text-muted',
@@ -55,14 +59,14 @@ export function Select<T extends string | number>({
         <SelectPrimitive.Content
           position="popper"
           sideOffset={6}
-          className="z-50 max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[12px] border border-border bg-surface p-1 shadow-pop"
+          className="z-50 max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-container border border-border bg-surface p-1 shadow-pop"
         >
           <SelectPrimitive.Viewport>
             {options.map((o) => (
               <SelectPrimitive.Item
                 key={String(o.value)}
                 value={String(o.value)}
-                className="relative flex cursor-pointer items-center rounded-[8px] py-1.5 pr-8 pl-3 text-sm text-text select-none data-[highlighted]:bg-surface-2 data-[highlighted]:outline-none"
+                className="relative flex cursor-pointer items-center rounded-control py-1.5 pr-8 pl-3 text-sm text-text select-none data-[highlighted]:bg-surface-2 data-[highlighted]:outline-none"
               >
                 <SelectPrimitive.ItemText>{o.label}</SelectPrimitive.ItemText>
                 <SelectPrimitive.ItemIndicator className="absolute right-2.5">

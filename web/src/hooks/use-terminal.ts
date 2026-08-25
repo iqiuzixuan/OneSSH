@@ -20,6 +20,8 @@ export function useTerminal() {
   // 每次 connect 递增：异步回调用它判断自己是否已被后来的连接取代
   const attempt = useRef(0)
   const [status, setStatus] = useState<TerminalStatus>('idle')
+  // 窗口栏标题要展示 `80×24` 这类几何信息，跟随 fit/resize 更新
+  const [size, setSize] = useState<{ cols: number; rows: number } | null>(null)
 
   /** 拆掉旧连接的回调再关闭，否则它的 onclose 会覆盖新连接的状态 */
   const detach = useCallback(() => {
@@ -102,6 +104,7 @@ export function useTerminal() {
       fit.fit()
       fit.observeResize()
       terminal.current = term
+      setSize({ cols: term.cols, rows: term.rows })
 
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
       const ws = new WebSocket(
@@ -144,14 +147,13 @@ export function useTerminal() {
         (data) =>
           ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'input', data })),
       )
-      term.onResize(
-        ({ cols, rows }) =>
-          ws.readyState === WebSocket.OPEN &&
-          ws.send(JSON.stringify({ type: 'resize', cols, rows })),
-      )
+      term.onResize(({ cols, rows }) => {
+        setSize({ cols, rows })
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }))
+      })
     },
     [detach],
   )
 
-  return { mountRef, status, connect, disconnect }
+  return { mountRef, status, size, connect, disconnect }
 }

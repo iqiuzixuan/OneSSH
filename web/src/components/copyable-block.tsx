@@ -42,7 +42,7 @@ export function CopyableBlock({
       </div>
       <pre
         className={cn(
-          'rounded-[8px] bg-surface-2 px-3 py-2.5 font-mono text-[12px] leading-[1.6] break-words whitespace-pre-wrap text-text',
+          'rounded-control bg-surface-2 px-3 py-2.5 font-mono text-[12px] leading-[1.6] break-words whitespace-pre-wrap text-text',
           clamp && 'max-h-56 overflow-auto',
         )}
       >

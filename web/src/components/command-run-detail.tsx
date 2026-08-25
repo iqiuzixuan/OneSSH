@@ -67,11 +67,11 @@ function OutputBlock({
         {output.isFetching && <Spinner className="size-3.5 text-muted" />}
       </div>
       {run.output_expired ? (
-        <div className="rounded-[8px] border border-border bg-surface-2 px-3 py-3 text-[13px] text-muted">
+        <div className="rounded-control border border-border bg-surface-2 px-3 py-3 text-[13px] text-muted">
           输出已超过 7 天保留期，命令、状态和退出码仍会继续保留。
         </div>
       ) : output.isError && !content ? (
-        <div className="flex items-start gap-2 rounded-[8px] border border-border bg-surface-2 px-3 py-3 text-[13px] text-muted">
+        <div className="flex items-start gap-2 rounded-control border border-border bg-surface-2 px-3 py-3 text-[13px] text-muted">
           <WarningCircle className="mt-0.5 shrink-0 text-warning" size={15} />
           <span>
             {run.status === 'running'
@@ -81,7 +81,7 @@ function OutputBlock({
         </div>
       ) : (
         <>
-          <pre className="max-h-72 min-h-12 overflow-auto rounded-[8px] bg-[#0d1117] px-3 py-2.5 font-mono text-[12px] leading-[1.6] break-words whitespace-pre-wrap text-[#d8dee9]">
+          <pre className="max-h-72 min-h-12 overflow-auto rounded-control bg-[#0d1117] px-3 py-2.5 font-mono text-[12px] leading-[1.6] break-words whitespace-pre-wrap text-[#d8dee9]">
             {content || '（无输出）'}
           </pre>
           {output.hasNextPage && (
@@ -104,7 +104,7 @@ function OutputBlock({
 
 export function ParamsList({ entries }: { entries: [string, unknown][] }) {
   return (
-    <dl className="divide-y divide-border rounded-[8px] border border-border">
+    <dl className="divide-y divide-border rounded-control border border-border">
       {entries.map(([key, value]) => (
         <div key={key} className="grid gap-1 px-3 py-2 sm:grid-cols-[8rem_1fr] sm:gap-3">
           <dt className="font-mono text-[12px] text-muted">{key}</dt>
@@ -146,7 +146,7 @@ export function CommandRunDetail({ id, audit }: { id: string; audit?: Audit }) {
     : []
   return (
     <div className="space-y-4">
-      <section className="rounded-[8px] border border-border px-3 py-3">
+      <section className="rounded-control border border-border px-3 py-3">
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-[13px] sm:grid-cols-4">
           <div>
             <dt className="text-[11px] tracking-wide text-muted uppercase">状态</dt>
@@ -217,12 +217,12 @@ export function CommandRunDetail({ id, audit }: { id: string; audit?: Audit }) {
       <CopyableBlock label="命令" value={run.command} clamp />
 
       {run.error && (
-        <div className="rounded-[8px] border border-danger/30 bg-danger/8 px-3 py-2.5 text-[13px] text-danger">
+        <div className="rounded-control border border-danger/30 bg-danger/8 px-3 py-2.5 text-[13px] text-danger">
           {run.error}
         </div>
       )}
       {run.output_error && (
-        <div className="rounded-[8px] border border-warning/30 bg-warning/8 px-3 py-2.5 text-[13px] text-warning">
+        <div className="rounded-control border border-warning/30 bg-warning/8 px-3 py-2.5 text-[13px] text-warning">
           完整输出记录失败：{run.output_error}
         </div>
       )}
@@ -236,7 +236,7 @@ export function CommandRunDetail({ id, audit }: { id: string; audit?: Audit }) {
         </>
       )}
 
-      <div className="grid gap-2 rounded-[8px] border border-border px-3 py-2.5 font-mono text-[11px] text-muted sm:grid-cols-2">
+      <div className="grid gap-2 rounded-control border border-border px-3 py-2.5 font-mono text-[11px] text-muted sm:grid-cols-2">
         <span title={run.id}>run_id: {run.id}</span>
         <span>开始: {formatTime(run.started_at)}</span>
         {run.job_id && <span title={run.job_id}>job_id: {run.job_id}</span>}

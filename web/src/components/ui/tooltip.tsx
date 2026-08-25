@@ -18,7 +18,7 @@ export function Tooltip({
         <TooltipPrimitive.Content
           side={side}
           sideOffset={8}
-          className="z-50 rounded-[8px] border border-border bg-surface px-2.5 py-1.5 text-[12px] text-text shadow-pop"
+          className="z-50 rounded-control border border-border bg-surface px-2.5 py-1.5 text-[12px] text-text shadow-pop"
         >
           {content}
         </TooltipPrimitive.Content>

@@ -43,8 +43,5 @@ export const navGroups: NavGroup[] = [
   },
 ]
 
-const flat = navGroups.flatMap((g) => g.items)
-
-/** 顶栏标题取自同一份导航定义，避免路由与标题两处维护 */
-export const titleForPath = (pathname: string) =>
-  flat.find((i) => (i.to === '/' ? pathname === '/' : pathname.startsWith(i.to)))?.label ?? '未找到'
+/** 扁平导航项：顶部标签页使用，与抽屉分组共用同一份导航数据 */
+export const navItems = navGroups.flatMap((g) => g.items)

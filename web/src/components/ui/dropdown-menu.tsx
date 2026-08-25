@@ -15,7 +15,7 @@ export const DropdownMenuContent = forwardRef<
         ref={ref}
         sideOffset={sideOffset}
         className={cn(
-          'z-50 min-w-40 rounded-[12px] border border-border bg-surface p-1 shadow-pop',
+          'z-50 min-w-40 rounded-container border border-border bg-surface p-1 shadow-pop',
           className,
         )}
         {...props}
@@ -32,7 +32,7 @@ export const DropdownMenuItem = forwardRef<
     <DropdownMenuPrimitive.Item
       ref={ref}
       className={cn(
-        'flex cursor-pointer items-center gap-2 rounded-[8px] px-2.5 py-1.5 text-[13px] select-none',
+        'flex cursor-pointer items-center gap-2 rounded-control px-2.5 py-1.5 text-[13px] select-none',
         'data-[highlighted]:bg-surface-2 data-[highlighted]:outline-none',
         danger ? 'text-danger' : 'text-text',
         className,

@@ -83,7 +83,7 @@ function ChartTooltip({ active, payload, label }: ChartTooltipProps) {
   if (!active || !payload?.length) return null
 
   return (
-    <div className="min-w-[148px] rounded-[12px] border border-border bg-surface px-3 py-2 shadow-pop">
+    <div className="min-w-[148px] rounded-container border border-border bg-surface px-3 py-2 shadow-pop">
       <p className="mb-1.5 text-[11px] text-muted tabular-nums">
         {TOOLTIP_TIME.format(Number(label))}
       </p>
@@ -164,6 +164,7 @@ export function MetricsPage() {
   return (
     <PageTransition>
       <PageHeader
+        eyebrow="Metrics"
         title="指标"
         subtitle="24 小时 CPU、内存、负载与磁盘趋势"
         actions={
