@@ -15,6 +15,7 @@ import {
 import { api, post, type ApiError } from '@/api/client'
 import type { OAuthAuthorizationInfo, OAuthDecisionPayload, OAuthDecisionResult } from '@/api/types'
 import { LogoTile } from '@/components/brand/logo'
+import { HostMultiSelect } from '@/components/host-multi-select'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -27,7 +28,6 @@ import {
 import { EmptyState } from '@/components/ui/empty-state'
 import { Field } from '@/components/ui/field'
 import { Label } from '@/components/ui/label'
-import { MultiSelect } from '@/components/ui/multi-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { useTheme, type ThemeMode } from '@/lib/theme'
@@ -468,15 +468,12 @@ export function OAuthAuthorizePage() {
                                       manageHosts || value.length > 0 || '请至少选择一台主机',
                                   }}
                                   render={({ field }) => (
-                                    <MultiSelect
+                                    <HostMultiSelect
                                       id={id}
                                       value={field.value}
                                       onChange={field.onChange}
                                       invalid={Boolean(errors.host_ids)}
-                                      options={hosts.map((host) => ({
-                                        value: host.id,
-                                        label: host.name,
-                                      }))}
+                                      hosts={hosts}
                                     />
                                   )}
                                 />

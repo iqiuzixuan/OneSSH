@@ -15,6 +15,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { toast } from 'sonner'
 import { useCreateToken, useDeleteToken, useDeleteTokens, useHosts, useTokens } from '@/api/queries'
 import type { Host, Token, TokenPayload } from '@/api/types'
+import { HostMultiSelect } from '@/components/host-multi-select'
 import { ConfirmDialog } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -26,7 +27,6 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { MultiSelect } from '@/components/ui/multi-select'
 import { PageHeader } from '@/components/ui/page-header'
 import { PageTransition } from '@/components/ui/page-transition'
 import { SelectionBar } from '@/components/ui/selection-bar'
@@ -475,15 +475,12 @@ export function TokensPage() {
                         validate: (value) => manageHosts || value.length > 0 || '请至少选择一台主机',
                       }}
                       render={({ field }) => (
-                        <MultiSelect
+                        <HostMultiSelect
                           id={id}
                           value={field.value}
                           onChange={field.onChange}
                           invalid={Boolean(errors.host_ids)}
-                          options={(hosts.data ?? []).map((host) => ({
-                            value: host.id,
-                            label: host.name,
-                          }))}
+                          hosts={hosts.data ?? []}
                         />
                       )}
                     />

@@ -5,7 +5,12 @@ import { useState } from 'react'
 import { cn } from '@/lib/cn'
 import { Badge } from './badge'
 
-export type MultiSelectOption<T extends string | number> = { value: T; label: string }
+export type MultiSelectOption<T extends string | number> = {
+  value: T
+  label: string
+  /** 附加信息同时参与搜索，便于按地址、标签等字段选择。 */
+  description?: string
+}
 
 /** 触发器里最多平铺几个 chip，其余折成「+N」——多选不该把筛选栏撑高 */
 const MAX_VISIBLE_CHIPS = 2
@@ -40,6 +45,7 @@ export function MultiSelect<T extends string | number>({
   invalid,
   id,
   maxSelected,
+  allowSelectAll = false,
   onCreateOption,
   createText = (q) => `创建标签「${q}」`,
   'aria-label': ariaLabel,
@@ -52,6 +58,8 @@ export function MultiSelect<T extends string | number>({
   emptyText?: string
   invalid?: boolean
   maxSelected?: number
+  /** 批量增删仅作用于当前搜索结果，保留其它已选项。 */
+  allowSelectAll?: boolean
   id?: string
   /** 传入即开启「创建新选项」：搜索词与现有 label 无完全匹配（大小写不敏感）时露出创建行 */
   onCreateOption?: (label: string) => void
@@ -69,10 +77,25 @@ export function MultiSelect<T extends string | number>({
   const labelOf = (v: T) => options.find((o) => o.value === v)?.label ?? String(v)
 
   const q = query.trim()
+  const terms = q.toLowerCase().split(/\s+/)
   // 已选置顶：长列表里勾选后不用滚回去确认，再次打开也能一眼看到当前选择
   const visible = options
-    .filter((o) => !q || o.label.toLowerCase().includes(q.toLowerCase()))
+    .filter((o) => {
+      const text = `${o.label} ${o.description ?? ''}`.toLowerCase()
+      return terms.every((term) => text.includes(term))
+    })
     .sort((a, b) => Number(value.includes(b.value)) - Number(value.includes(a.value)))
+  const allVisibleSelected = visible.length > 0 && visible.every((o) => value.includes(o.value))
+  const toggleVisible = () => {
+    const visibleValues = new Set(visible.map((o) => o.value))
+    if (allVisibleSelected) {
+      onChange(value.filter((v) => !visibleValues.has(v)))
+      return
+    }
+    const available = Math.max(0, (maxSelected ?? Infinity) - value.length)
+    const additions = visible.filter((o) => !value.includes(o.value)).slice(0, available)
+    onChange([...value, ...additions.map((o) => o.value)])
+  }
 
   // 与现有 label 完全相同（忽略大小写）时不提供创建，避免造出肉眼难分的重复项
   const canCreate =
@@ -151,22 +174,41 @@ export function MultiSelect<T extends string | number>({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key !== 'Enter' || !q) return
+                if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+                e.preventDefault()
+                if (!q) return
                 // 有搜索词时回车直接勾选首个匹配项，全程不需要碰鼠标
                 if (visible.length > 0) {
-                  e.preventDefault()
                   toggle(visible[0].value)
                 } else if (canCreate) {
                   // 没有可勾选的匹配项时，回车退一步触发创建，与点击创建行等效
-                  e.preventDefault()
                   create()
                 }
               }}
               placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
               className="w-full bg-transparent text-[13px] text-text outline-none placeholder:text-faint"
             />
           </div>
-          <div className="flex-1 overflow-y-auto p-1">
+          {allowSelectAll && (
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+              <span className="text-[12px] text-muted tabular-nums" role="status">
+                匹配 {visible.length} 项 / 共 {options.length} 项
+              </span>
+              <button
+                type="button"
+                onClick={toggleVisible}
+                disabled={
+                  visible.length === 0 ||
+                  (!allVisibleSelected && maxSelected != null && value.length >= maxSelected)
+                }
+                className="shrink-0 cursor-pointer text-[12px] text-accent hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {allVisibleSelected ? '取消选择结果' : '全选筛选结果'}
+              </button>
+            </div>
+          )}
+          <div className="min-h-0 flex-1 overflow-y-auto p-1">
             {visible.length === 0 && (
               <p className="px-3 py-2 text-[13px] text-muted">
                 {q ? `没有匹配「${q}」的选项` : emptyText}
@@ -195,8 +237,18 @@ export function MultiSelect<T extends string | number>({
                       <Check size={11} weight="bold" className="text-accent-fg" />
                     </CheckboxPrimitive.Indicator>
                   </CheckboxPrimitive.Root>
-                  <span className="truncate">
-                    <Highlight text={o.label} query={q} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">
+                      <Highlight text={o.label} query={q} />
+                    </span>
+                    {o.description && (
+                      <span
+                        className="mt-0.5 block text-[12px] leading-5 break-all whitespace-pre-line text-muted"
+                        title={o.description}
+                      >
+                        <Highlight text={o.description} query={q} />
+                      </span>
+                    )}
                   </span>
                 </label>
               )
@@ -214,7 +266,7 @@ export function MultiSelect<T extends string | number>({
             )}
           </div>
           {value.length > 0 && (
-            <div className="flex items-center justify-between border-t border-border px-3 py-1.5">
+            <div className="flex shrink-0 items-center justify-between border-t border-border px-3 py-1.5">
               <span className="text-[12px] text-muted tabular-nums">
                 已选 {value.length} 项{maxSelected != null && ` · 最多 ${maxSelected} 项`}
               </span>
