@@ -3,7 +3,7 @@ import * as PopoverPrimitive from '@radix-ui/react-popover'
 import { CaretDown, Check, MagnifyingGlass, Plus } from '@phosphor-icons/react'
 import { useState } from 'react'
 import { cn } from '@/lib/cn'
-import { Badge } from './badge'
+import { Tag } from './badge'
 
 export type MultiSelectOption<T extends string | number> = {
   value: T
@@ -22,7 +22,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
   return (
     <>
       {text.slice(0, i)}
-      <mark className="rounded-[2px] bg-accent-soft px-px text-accent">
+      <mark className="rounded-[2px] bg-transparent px-px font-semibold text-ink">
         {text.slice(i, i + query.length)}
       </mark>
       {text.slice(i + query.length)}
@@ -135,40 +135,37 @@ export function MultiSelect<T extends string | number>({
           }
         }}
         className={cn(
-          'flex h-9 w-full items-center justify-between gap-2 overflow-hidden rounded-control border bg-surface px-3 text-sm',
-          'transition-colors duration-150 hover:border-border-strong',
-          'focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none',
-          invalid ? 'border-danger' : 'border-border',
+          'flex h-8 w-full items-center justify-between gap-2 overflow-hidden rounded-ctl bg-surface px-2.5 text-left text-[13px] shadow-ctl',
+          'outline-none transition-shadow duration-150 focus-visible:shadow-focus',
+          invalid && 'shadow-[0_0_0_1px_var(--bad)]',
         )}
       >
         {value.length === 0 ? (
-          <span className="min-w-0 flex-1 truncate text-muted">{placeholder}</span>
+          <span className="min-w-0 flex-1 truncate text-ink-2">{placeholder}</span>
         ) : (
           // flex-1 + overflow-hidden 把 chips 约束在 caret 左侧；chip 允许收缩截断，
           // 否则两个长名字会越过 caret 被 overflow 裁掉（看起来像被下拉图标遮住）
           <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
             {shown.map((v) => (
-              <Badge key={String(v)} variant="accent" className="min-w-0 max-w-36">
+              <Tag key={String(v)} className="min-w-0 max-w-36">
                 <span className="truncate">{labelOf(v)}</span>
-              </Badge>
+              </Tag>
             ))}
             {rest > 0 && (
-              <Badge variant="default" className="shrink-0">
-                +{rest}
-              </Badge>
+              <Tag className="shrink-0">+{rest}</Tag>
             )}
           </span>
         )}
-        <CaretDown size={14} className="shrink-0 text-muted" />
+        <CaretDown size={14} className="shrink-0 text-ink-3" />
       </PopoverPrimitive.Trigger>
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content
           align="start"
           sideOffset={6}
-          className="z-50 flex max-h-72 w-[var(--radix-popover-trigger-width)] min-w-56 flex-col overflow-hidden rounded-container border border-border bg-surface shadow-pop"
+          className="z-[70] flex max-h-72 w-[var(--radix-popover-trigger-width)] min-w-56 flex-col overflow-hidden rounded-pop origin-[var(--radix-popover-content-transform-origin)] data-[state=open]:animate-pop-in bg-surface shadow-pop"
         >
-          <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-            <MagnifyingGlass size={14} className="shrink-0 text-faint" />
+          <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+            <MagnifyingGlass size={14} className="shrink-0 text-ink-3" />
             <input
               autoFocus
               value={query}
@@ -187,12 +184,12 @@ export function MultiSelect<T extends string | number>({
               }}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
-              className="w-full bg-transparent text-[13px] text-text outline-none placeholder:text-faint"
+              className="w-full bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-3"
             />
           </div>
           {allowSelectAll && (
-            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1.5">
-              <span className="text-[12px] text-muted tabular-nums" role="status">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-1.5">
+              <span className="text-[12px] text-ink-2 tabular-nums" role="status">
                 匹配 {visible.length} 项 / 共 {options.length} 项
               </span>
               <button
@@ -202,7 +199,7 @@ export function MultiSelect<T extends string | number>({
                   visible.length === 0 ||
                   (!allVisibleSelected && maxSelected != null && value.length >= maxSelected)
                 }
-                className="shrink-0 cursor-pointer text-[12px] text-accent hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                className="shrink-0 cursor-pointer text-[12px] font-medium text-ink hover:underline disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {allVisibleSelected ? '取消选择结果' : '全选筛选结果'}
               </button>
@@ -210,7 +207,7 @@ export function MultiSelect<T extends string | number>({
           )}
           <div className="min-h-0 flex-1 overflow-y-auto p-1">
             {visible.length === 0 && (
-              <p className="px-3 py-2 text-[13px] text-muted">
+              <p className="px-3 py-2 text-[13px] text-ink-2">
                 {q ? `没有匹配「${q}」的选项` : emptyText}
               </p>
             )}
@@ -221,20 +218,20 @@ export function MultiSelect<T extends string | number>({
                 <label
                   key={String(o.value)}
                   className={cn(
-                    'flex items-center gap-2.5 rounded-control px-2.5 py-1.5 text-sm text-text',
+                    'flex items-center gap-2.5 rounded-pop-in px-2.5 py-1.5 text-[13px] text-ink',
                     disabled
                       ? 'cursor-not-allowed opacity-50'
-                      : 'cursor-pointer hover:bg-surface-2',
+                      : 'cursor-pointer hover:bg-hover-2',
                   )}
                 >
                   <CheckboxPrimitive.Root
                     checked={value.includes(o.value)}
                     disabled={disabled}
                     onCheckedChange={() => toggle(o.value)}
-                    className="flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-border-strong data-[state=checked]:border-accent data-[state=checked]:bg-accent"
+                    className="grid size-4 shrink-0 place-items-center rounded-[5px] bg-surface shadow-[0_0_0_1px_var(--edge-2)] data-[state=checked]:bg-primary data-[state=checked]:shadow-[0_0_0_1px_var(--primary)]"
                   >
                     <CheckboxPrimitive.Indicator>
-                      <Check size={11} weight="bold" className="text-accent-fg" />
+                      <Check size={11} weight="bold" className="text-primary-fg" />
                     </CheckboxPrimitive.Indicator>
                   </CheckboxPrimitive.Root>
                   <span className="min-w-0 flex-1">
@@ -243,7 +240,7 @@ export function MultiSelect<T extends string | number>({
                     </span>
                     {o.description && (
                       <span
-                        className="mt-0.5 block text-[12px] leading-5 break-all whitespace-pre-line text-muted"
+                        className="mt-0.5 block text-[12px] leading-5 break-all whitespace-pre-line text-ink-2"
                         title={o.description}
                       >
                         <Highlight text={o.description} query={q} />
@@ -258,22 +255,22 @@ export function MultiSelect<T extends string | number>({
               <button
                 type="button"
                 onClick={create}
-                className="flex w-full cursor-pointer items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left text-sm text-text hover:bg-surface-2"
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-pop-in px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-hover-2"
               >
-                <Plus size={14} className="shrink-0 text-accent" />
+                <Plus size={14} className="shrink-0 text-ink-2" />
                 <span className="truncate">{createText(q)}</span>
               </button>
             )}
           </div>
           {value.length > 0 && (
-            <div className="flex shrink-0 items-center justify-between border-t border-border px-3 py-1.5">
-              <span className="text-[12px] text-muted tabular-nums">
+            <div className="flex shrink-0 items-center justify-between border-t border-line px-3 py-1.5">
+              <span className="text-[12px] text-ink-2 tabular-nums">
                 已选 {value.length} 项{maxSelected != null && ` · 最多 ${maxSelected} 项`}
               </span>
               <button
                 type="button"
                 onClick={() => onChange([])}
-                className="cursor-pointer text-[12px] text-muted transition-colors hover:text-danger"
+                className="cursor-pointer text-[12px] text-ink-2 transition-colors hover:text-bad"
               >
                 清空
               </button>

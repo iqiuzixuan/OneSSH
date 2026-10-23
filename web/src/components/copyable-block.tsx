@@ -1,53 +1,48 @@
-import { Check, Copy } from '@phosphor-icons/react'
-import { useState } from 'react'
-import { toast } from 'sonner'
 import { cn } from '@/lib/cn'
+import { CopyButton } from './ui/code'
 
 /**
- * 带复制按钮的原文块：命令、调用摘要这类需要原样带走的内容统一走这里。
- * clamp 用于详情场景——下方还有更长的输出块时，命令块限高滚动，免得一条超长命令把整页撑开。
+ * 原文块：命令、stdout / stderr、配置片段这类需要原样带走的长文本。
+ * 井底等宽字，右上角复制；tone="bad" 用于 stderr。clamp 时限高滚动。
  */
 export function CopyableBlock({
-  label,
   value,
-  clamp,
+  label = '内容',
+  tone,
+  clamp = true,
+  prompt,
+  className,
+  empty,
 }: {
-  label: string
   value: string
+  label?: string
+  tone?: 'bad'
   clamp?: boolean
+  /** 命令前缀，如 "$" */
+  prompt?: string
+  className?: string
+  /** value 为空时显示的占位 */
+  empty?: string
 }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-      toast.success('已复制')
-      window.setTimeout(() => setCopied(false), 1600)
-    } catch {
-      toast.error('复制失败，请手动选择文本')
-    }
-  }
   return (
-    <div>
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <p className="text-[11px] tracking-wide text-muted uppercase">{label}</p>
-        <button
-          type="button"
-          onClick={() => void copy()}
-          aria-label={`复制${label}`}
-          className="rounded-[4px] p-0.5 text-muted transition-colors hover:bg-surface-2 hover:text-text"
-        >
-          {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
-        </button>
-      </div>
+    <div className={cn('relative rounded-well bg-surface shadow-card', className)}>
       <pre
         className={cn(
-          'rounded-control bg-surface-2 px-3 py-2.5 font-mono text-[12px] leading-[1.6] break-words whitespace-pre-wrap text-text',
-          clamp && 'max-h-56 overflow-auto',
+          'm-0 overflow-auto py-3 pr-11 pl-3.5 font-mono text-[12px] leading-[1.7] break-words whitespace-pre-wrap',
+          tone === 'bad' ? 'text-bad' : 'text-ink',
+          clamp && 'max-h-[340px]',
         )}
       >
-        {value}
+        {value ? (
+          <>
+            {prompt && <span className="text-ink-3 select-none">{prompt} </span>}
+            {value}
+          </>
+        ) : (
+          <span className="text-ink-3">{empty ?? '（空）'}</span>
+        )}
       </pre>
+      {value && <CopyButton value={value} label={`复制${label}`} className="absolute top-2 right-2" />}
     </div>
   )
 }

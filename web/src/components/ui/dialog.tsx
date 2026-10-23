@@ -1,26 +1,56 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from '@phosphor-icons/react'
 import { AnimatePresence, motion } from 'motion/react'
+import { forwardRef } from 'react'
 import { cn } from '@/lib/cn'
-import { overlayTransition, popTransition } from '@/lib/motion'
+import { scrimTransition, spring } from '@/lib/motion'
 
-const widths = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl' } as const
+const widths = { sm: 'max-w-[440px]', md: 'max-w-[560px]', lg: 'max-w-[720px]', xl: 'max-w-[860px]' } as const
 
+/** 遮罩：只做透明度。Radix 会经 Slot 给它传 ref，必须 forwardRef */
+export const Scrim = forwardRef<HTMLDivElement, React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>>(
+  function Scrim(props, ref) {
+    return (
+      <DialogPrimitive.Overlay ref={ref} asChild forceMount {...props}>
+        <motion.div
+          className="fixed inset-0 z-[60] bg-scrim"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={scrimTransition}
+        />
+      </DialogPrimitive.Overlay>
+    )
+  },
+)
+
+/**
+ * 对话框：外圆角 18、内边距 6；底部动作区是一块井，圆角 12 = 18 − 6。
+ * 进入从 0.96 弹到 1，退出更快——关掉的东西不该让人等。
+ */
 export function Dialog({
   open,
   onOpenChange,
   title,
   description,
-  size = 'md',
+  icon,
+  size = 'sm',
   footer,
+  bare,
+  className,
   children,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   title: string
-  description?: string
+  description?: React.ReactNode
+  /** 标题上方的图标块 */
+  icon?: React.ReactNode
   size?: keyof typeof widths
   footer?: React.ReactNode
+  /** 不渲染默认的标题区，由 children 自己排版（向导、命令面板这类） */
+  bare?: boolean
+  className?: string
   children?: React.ReactNode
 }) {
   return (
@@ -28,54 +58,58 @@ export function Dialog({
       <AnimatePresence>
         {open && (
           <DialogPrimitive.Portal forceMount>
-            <DialogPrimitive.Overlay asChild forceMount>
-              <motion.div
-                className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px]"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={overlayTransition}
-              />
-            </DialogPrimitive.Overlay>
-            <DialogPrimitive.Content asChild forceMount>
-              <motion.div
-                className={cn(
-                  'fixed top-1/2 left-1/2 z-50 flex max-h-[88dvh] w-[calc(100vw-2rem)] flex-col',
-                  'rounded-container border border-border bg-surface shadow-pop focus:outline-none',
-                  widths[size],
-                )}
-                style={{ x: '-50%', y: '-50%' }}
-                initial={{ opacity: 0, scale: 0.96 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.96 }}
-                transition={popTransition}
-              >
-                <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
-                  <div className="space-y-1">
-                    <DialogPrimitive.Title className="text-sm font-semibold text-text">
-                      {title}
-                    </DialogPrimitive.Title>
-                    {description ? (
-                      <DialogPrimitive.Description className="text-[13px] text-muted">
-                        {description}
-                      </DialogPrimitive.Description>
-                    ) : (
-                      <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
-                    )}
-                  </div>
-                  <DialogPrimitive.Close
-                    className="-mr-1 rounded-control p-1 text-muted transition-colors hover:bg-surface-2 hover:text-text"
-                    aria-label="关闭"
-                  >
-                    <X size={16} />
-                  </DialogPrimitive.Close>
-                </div>
-                <div className="overflow-y-auto px-5 py-4">{children}</div>
-                {footer && (
-                  <div className="flex justify-end gap-2 border-t border-border px-5 py-3">{footer}</div>
-                )}
-              </motion.div>
-            </DialogPrimitive.Content>
+            <Scrim />
+            <div className="pointer-events-none fixed inset-0 z-[61] grid place-items-center p-4">
+              <DialogPrimitive.Content asChild forceMount aria-describedby={undefined}>
+                <motion.div
+                  className={cn(
+                    'pointer-events-auto flex max-h-[min(88dvh,820px)] w-full flex-col rounded-dlg bg-surface p-1.5 shadow-pop outline-none',
+                    widths[size],
+                    className,
+                  )}
+                  initial={{ opacity: 0, scale: 0.96, y: 8 }}
+                  animate={{ opacity: 1, scale: 1, y: 0, transition: spring.soft }}
+                  exit={{ opacity: 0, scale: 0.97, y: 4, transition: spring.exit }}
+                >
+                  {bare ? (
+                    <>
+                      <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
+                      {children}
+                    </>
+                  ) : (
+                    <>
+                      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-4">
+                        {icon && (
+                          <div className="mb-3.5 grid size-9 place-items-center rounded-[11px] bg-well text-ink-2 shadow-well [&_svg]:size-[18px]">
+                            {icon}
+                          </div>
+                        )}
+                        <DialogPrimitive.Title className="pr-8 text-[15px] font-semibold tracking-[-0.01em]">
+                          {title}
+                        </DialogPrimitive.Title>
+                        {description && (
+                          <DialogPrimitive.Description className="mt-1.5 text-[13px] leading-relaxed text-ink-2">
+                            {description}
+                          </DialogPrimitive.Description>
+                        )}
+                        <DialogPrimitive.Close
+                          className="absolute top-3 right-3 grid size-7 place-items-center rounded-[9px] text-ink-3 transition-colors hover:bg-hover-2 hover:text-ink"
+                          aria-label="关闭"
+                        >
+                          <X size={15} />
+                        </DialogPrimitive.Close>
+                        {children && <div className={cn(description || icon ? 'mt-4' : 'mt-3')}>{children}</div>}
+                      </div>
+                      {footer && (
+                        <div className="flex shrink-0 items-center justify-end gap-2 rounded-dlg-in bg-well p-2.5 shadow-well">
+                          {footer}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </motion.div>
+              </DialogPrimitive.Content>
+            </div>
           </DialogPrimitive.Portal>
         )}
       </AnimatePresence>

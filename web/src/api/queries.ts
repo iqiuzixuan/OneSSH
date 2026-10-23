@@ -12,6 +12,7 @@ import type {
   CommandOutputChunk,
   CommandRun,
   FileEntry,
+  GatewayInfo,
   Host,
   HostPayload,
   JobStatus,
@@ -19,6 +20,7 @@ import type {
   MemoryBankStat,
   MemoryRow,
   Metric,
+  Overview,
   SSHKey,
   Token,
   TokenPayload,
@@ -34,6 +36,7 @@ export const queryKeys = {
   jobLogs: (id: string) => ['jobs', id, 'logs'] as const,
   audit: (filter: AuditFilter) => ['audit', filter] as const,
   auditTools: ['audit', 'tools'] as const,
+  commandRuns: (filter: CommandRunFilter) => ['command-runs', 'list', filter] as const,
   commandRun: (id: string) => ['command-runs', 'detail', id] as const,
   commandOutput: (id: string, stream: string) => ['command-runs', 'output', id, stream] as const,
   metrics: (hostId: number, hours: number) => ['metrics', hostId, hours] as const,
@@ -43,6 +46,8 @@ export const queryKeys = {
   memoryList: (hostId: number | 'all', q: string, limit: number, offset: number) =>
     ['memories', 'list', hostId, q, limit, offset] as const,
   memoryStats: ['memories', 'stats'] as const,
+  overview: (hours: number) => ['overview', hours] as const,
+  info: ['info'] as const,
 }
 
 /** 所有 mutation 的统一失败提示；成功提示由调用方按语义给 */
@@ -103,8 +108,9 @@ function useBatchMutation<TId>(
 
 /* ── 查询 ───────────────────────────────────────────────────────── */
 
+/** 列表里带连通状态（health），状态由监控采样与命令执行刷新，这里 30s 拉一次足够 */
 export const useHosts = () =>
-  useQuery({ queryKey: queryKeys.hosts, queryFn: () => api<Host[]>('/hosts') })
+  useQuery({ queryKey: queryKeys.hosts, queryFn: () => api<Host[]>('/hosts'), refetchInterval: 30_000 })
 
 export const useKeys = () =>
   useQuery({ queryKey: queryKeys.keys, queryFn: () => api<SSHKey[]>('/keys') })
@@ -112,11 +118,15 @@ export const useKeys = () =>
 export const useTokens = () =>
   useQuery({ queryKey: queryKeys.tokens, queryFn: () => api<Token[]>('/tokens') })
 
-export const useJobs = () =>
+/**
+ * 任务列表。live=true（任务页）时后端会逐个 SSH 核对运行中任务的真实状态，4s 轮询；
+ * live=false（侧栏、概览只要计数）只读库里的记录，不打扰远端主机，job_status 事件会触发失效。
+ */
+export const useJobs = ({ live = true }: { live?: boolean } = {}) =>
   useQuery({
-    queryKey: queryKeys.jobs,
-    queryFn: () => api<JobStatus[]>('/jobs'),
-    refetchInterval: 4000,
+    queryKey: [...queryKeys.jobs, live ? 'live' : 'snapshot'],
+    queryFn: () => api<JobStatus[]>(live ? '/jobs' : '/jobs?refresh=0'),
+    refetchInterval: live ? 4000 : 30_000,
   })
 
 export const useJobLogs = (id: string, running: boolean) =>
@@ -136,26 +146,50 @@ export const useJobLogs = (id: string, running: boolean) =>
     refetchInterval: running ? 2000 : false,
   })
 
-/** 审计筛选：缺省即不过滤；tool/token/host 支持多值（OR），ok 单值 */
-export type AuditFilter = { tool?: string[]; token?: number[]; host?: string[]; ok?: boolean }
+/**
+ * 审计筛选：缺省即不过滤；tool/token/host 支持多值（OR）。
+ * ok 与 denied 组合表达结果：成功 = ok；拒绝 = denied；失败（非拒绝）= !ok && !denied。
+ */
+export type AuditFilter = {
+  tool?: string[]
+  token?: number[]
+  host?: string[]
+  ok?: boolean
+  denied?: boolean
+  limit?: number
+}
 
 export const useAudit = (filter: AuditFilter = {}) =>
   useQuery({
     queryKey: queryKeys.audit(filter),
     queryFn: () => {
       // 重复参数而不是逗号拼接：主机名允许含逗号，拼起来后端拆不回来
-      const params = new URLSearchParams({ limit: '100' })
+      const params = new URLSearchParams({ limit: String(filter.limit ?? 100) })
       for (const tool of filter.tool ?? []) params.append('tool', tool)
       for (const token of filter.token ?? []) params.append('token', String(token))
       for (const host of filter.host ?? []) params.append('host', host)
       if (filter.ok != null) params.set('ok', String(filter.ok))
+      if (filter.denied != null) params.set('denied', String(filter.denied))
       return api<Audit[]>(`/audit?${params}`)
     },
     // 切换筛选时旧数据留在原位渐隐，避免每改一个条件表格就塌成骨架屏
     placeholderData: keepPreviousData,
-    // 活动页是盯梢用的：新的工具调用几秒内要出现，不能等用户改筛选才重拉
-    refetchInterval: 4000,
+    // 新调用由实时事件流触发失效重拉（见 LiveProvider）；这里只留一个兜底的慢轮询，防 SSE 断线漏数据
+    refetchInterval: 30_000,
   })
+
+/** 概览聚合统计：实时事件会节流触发失效，这里的轮询只是兜底 */
+export const useOverview = (hours = 24) =>
+  useQuery({
+    queryKey: queryKeys.overview(hours),
+    queryFn: () => api<Overview>(`/overview?hours=${hours}`),
+    placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
+  })
+
+/** 网关版本与启动时间：进程生命周期内不变 */
+export const useInfo = () =>
+  useQuery({ queryKey: queryKeys.info, queryFn: () => api<GatewayInfo>('/info'), staleTime: Infinity })
 
 /**
  * 工具名全集：审计列表只回最近 100 条，从中累积出的选项会漏掉更早出现过的工具，
@@ -166,6 +200,34 @@ export const useAuditTools = () =>
     queryKey: queryKeys.auditTools,
     queryFn: () => api<string[]>('/audit/tools'),
     staleTime: 5 * 60_000,
+  })
+
+/** 命令执行列表筛选：多值为 OR；q 对命令文本做子串匹配 */
+export type CommandRunFilter = {
+  host?: string[]
+  token?: number[]
+  tool?: string[]
+  status?: CommandRun['status'][]
+  q?: string
+  limit?: number
+}
+
+/** 命令执行列表：命令开始 / 结束事件会触发失效重拉，轮询只兜底 */
+export const useCommandRuns = (filter: CommandRunFilter = {}, enabled = true) =>
+  useQuery({
+    queryKey: queryKeys.commandRuns(filter),
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: String(filter.limit ?? 50) })
+      for (const host of filter.host ?? []) params.append('host', host)
+      for (const token of filter.token ?? []) params.append('token', String(token))
+      for (const tool of filter.tool ?? []) params.append('tool', tool)
+      for (const status of filter.status ?? []) params.append('status', status)
+      if (filter.q) params.set('q', filter.q)
+      return api<CommandRun[]>(`/command-runs?${params}`)
+    },
+    enabled,
+    placeholderData: keepPreviousData,
+    refetchInterval: 30_000,
   })
 
 export const useCommandRun = (id: string | null) =>
@@ -259,9 +321,17 @@ export const useResetFingerprint = () =>
     '指纹已重置',
   )
 
-/** 测试连接不改数据，失败提示由 toast.promise 承担，故不走统一 onError */
-export const useTestHost = () =>
-  useMutation({ mutationFn: (id: number) => post<{ output?: string }>(`/hosts/${id}/test`, {}) })
+/**
+ * 测试连接不改配置，但会刷新连接池里的连通状态，结束后重拉主机列表让在线点跟上。
+ * 失败提示由调用方的 toast.promise 承担，故不走统一 onError。
+ */
+export function useTestHost() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => post<{ output?: string }>(`/hosts/${id}/test`, {}),
+    onSettled: () => void qc.invalidateQueries({ queryKey: queryKeys.hosts }),
+  })
+}
 
 /* ── 密钥 / 令牌 / 任务 ─────────────────────────────────────────── */
 
@@ -288,10 +358,10 @@ export const useToolGroups = () =>
   useQuery({ queryKey: queryKeys.toolGroups, queryFn: () => api<ToolGroup[]>('/tool-groups'), staleTime: Infinity })
 
 export const useDeleteToken = () =>
-  useInvalidatingMutation<number, void>((id) => del(`/tokens/${id}`), queryKeys.tokens, '令牌已删除')
+  useInvalidatingMutation<number, void>((id) => del(`/tokens/${id}`), queryKeys.tokens, '令牌已撤销，立即失效')
 
 export const useDeleteTokens = () =>
-  useBatchMutation<number>((id) => del(`/tokens/${id}`), queryKeys.tokens, '删除')
+  useBatchMutation<number>((id) => del(`/tokens/${id}`), queryKeys.tokens, '撤销')
 
 export const useKillJob = () =>
   useInvalidatingMutation<string, unknown>(

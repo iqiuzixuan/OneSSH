@@ -17,23 +17,55 @@ const SUPERELLIPSE =
  *
  * 几何与 `web/public/logo.svg`（favicon）共用同一份 32×32 网格，改一处必须改另一处。
  * 线宽 3.2 / 2.7 与两组元素间 2.6 的间隙是 16px favicon 下仍能分辨的下限，调整前先在
- * 小尺寸下验证。渐变与描边都走 accent 令牌，浅色 / 深色主题自动适配。
+ * 小尺寸下验证。配色跟随静流：石墨色底 + 暖白字形，深色主题下整体反转（--logo-* 令牌），
+ * 不再使用任何彩色——界面里出现颜色就意味着状态，品牌不占用这条语义。
  *
  * 尺寸由调用方通过 className 给（`size-8` 之类）。留白已经画进 viewBox，不要再加 padding；
  * 外框不是 border-radius，传圆角类名不会有任何效果。
  */
 export function LogoTile({ className }: { className?: string }) {
-  // 同一页面可能同时出现多个实例，渐变 id 必须唯一，否则后挂载的会抢走前面的引用
-  const gradient = useId()
+  // 同一页面可能同时出现多个实例，渐变与裁剪 id 必须唯一，否则后挂载的会抢走前面的引用
+  const id = useId()
   return (
-    <svg viewBox="0 0 32 32" aria-hidden className={cn('shrink-0 text-accent-fg', className)}>
+    <svg viewBox="0 0 32 32" aria-hidden className={cn('shrink-0 text-[var(--logo-glyph)]', className)}>
       <defs>
-        <linearGradient id={gradient} x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-          <stop offset="0" style={{ stopColor: 'var(--accent)' }} />
-          <stop offset="1" style={{ stopColor: 'var(--accent-hover)' }} />
+        {/* 自上而下由浅到深：像流量带中央的网关块一样有一点「被光照到」的体积 */}
+        <linearGradient id={`${id}-tile`} x1="0" y1="0" x2="0" y2="32" gradientUnits="userSpaceOnUse">
+          <stop offset="0" style={{ stopColor: 'var(--logo-top)' }} />
+          <stop offset="1" style={{ stopColor: 'var(--logo-bottom)' }} />
         </linearGradient>
+        <linearGradient id={`${id}-edge`} x1="0" y1="0" x2="0" y2="32" gradientUnits="userSpaceOnUse">
+          <stop offset="0" style={{ stopColor: 'var(--logo-edge)' }} />
+          <stop offset="0.45" style={{ stopColor: 'var(--logo-edge)', stopOpacity: 0 }} />
+        </linearGradient>
+        <clipPath id={`${id}-clip`}>
+          <path d={SUPERELLIPSE} />
+        </clipPath>
       </defs>
-      <path d={SUPERELLIPSE} fill={`url(#${gradient})`} />
+      <path d={SUPERELLIPSE} fill={`url(#${id}-tile)`} />
+      {/* 顶部 1px 内高光：描边 2px 再用外形裁掉外侧一半 */}
+      <path d={SUPERELLIPSE} fill="none" stroke={`url(#${id}-edge)`} strokeWidth="2" clipPath={`url(#${id}-clip)`} />
+      <path
+        d="M7.8 9.2 13.6 16 7.8 22.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <g stroke="currentColor" strokeWidth="2.7" strokeLinecap="round">
+        <path d="M19.2 10.6h5.2" />
+        <path d="M19.2 16h5.2" />
+        <path d="M19.2 21.4h5.2" />
+      </g>
+    </svg>
+  )
+}
+
+/** 纯字形版本（无底板）：单色场景用，颜色跟随 currentColor，如流量带中央的网关块 */
+export function LogoGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 32 32" aria-hidden className={cn('shrink-0', className)}>
       <path
         d="M7.8 9.2 13.6 16 7.8 22.8"
         fill="none"

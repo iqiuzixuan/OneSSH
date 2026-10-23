@@ -1,87 +1,159 @@
-import { Brain, MagnifyingGlass, Trash, WarningCircle } from '@phosphor-icons/react'
-import { useEffect, useMemo, useState } from 'react'
+import { Brain, CaretLeft, CaretRight, MagnifyingGlass, Trash, WarningCircle } from '@phosphor-icons/react'
+import { AnimatePresence, motion } from 'motion/react'
+import { forwardRef, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useDeleteMemories, useDeleteMemory, useHosts, useMemories, useMemoryStats } from '@/api/queries'
 import type { MemoryRow } from '@/api/types'
 import { ConfirmDialog } from '@/components/ui/alert-dialog'
-import { Badge, HashBadge } from '@/components/ui/badge'
+import { Tag } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { DataTable, type Column } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
+import { Num } from '@/components/ui/number'
 import { PageHeader } from '@/components/ui/page-header'
 import { PageTransition } from '@/components/ui/page-transition'
-import { Select } from '@/components/ui/select'
 import { SelectionBar } from '@/components/ui/selection-bar'
 import { Skeleton } from '@/components/ui/skeleton'
-import { StatCard, StatGroup } from '@/components/ui/stat-card'
+import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
-import { formatTime } from '@/lib/format'
+import { formatAgo, formatTime } from '@/lib/format'
+import { spring, staggerItem } from '@/lib/motion'
 
 const PAGE_SIZE = 50
-/** 筛选值全部是字符串：Radix Select 只接受 string，'all' 与主机 id 混在一个下拉里 */
+/** 筛选值全部是字符串：'all' 与主机 id 混在一起；后端约定 host_id=0 表示全局库 */
 const ALL_BANKS = 'all'
-/** 后端约定 host_id=0 表示全局库 */
 const GLOBAL_BANK = '0'
 
-/** 后端 CHECK 约束的四个取值；未知值原样透出，不静默吞掉 */
-const VERACITY_LABEL: Record<string, string> = {
-  stated: '断言',
-  inferred: '推断',
-  tool: '工具',
-  unknown: '未知',
+/** 后端 CHECK 约束的四个取值；未知值原样透出 */
+const VERACITY: Record<string, { label: string; className: string; hint: string }> = {
+  stated: { label: '断言', className: 'bg-primary text-primary-fg', hint: 'Agent 明确陈述的事实' },
+  inferred: { label: '推断', className: 'text-ink-2 shadow-[inset_0_0_0_1px_var(--edge-2)]', hint: '由现象推断，可能需要复核' },
+  tool: { label: '工具', className: 'bg-well-2 text-ink-2', hint: '工具输出直接观测到的' },
+  // 来源不明是唯一需要提醒的可信度，所以只有它带状态色
+  unknown: { label: '未知', className: 'bg-warn-soft text-warn', hint: '来源不明，使用前请确认' },
 }
 
-/**
- * 可信度是分类值，上徽章不裸文本：断言是 Agent 最确定的事实，用主题色；
- * 推断次一等用蓝（与 Chip 的 info 同色系）；工具产出只是记录用描边；未知给警告色。
- */
-const VERACITY_VARIANT = {
-  stated: 'accent',
-  inferred: 'info',
-  tool: 'outline',
-  unknown: 'warning',
-} as const
-
-function VeracityBadge({ value }: { value: string }) {
-  // title 保留后端原值，排障时不必回头翻映射表
+function Veracity({ value }: { value: string }) {
+  const meta = VERACITY[value] ?? { label: value, className: 'bg-well-2 text-ink-2', hint: value }
   return (
-    <Badge
-      variant={VERACITY_VARIANT[value as keyof typeof VERACITY_VARIANT] ?? 'default'}
-      title={value}
-    >
-      {VERACITY_LABEL[value] ?? value}
-    </Badge>
+    <Tooltip content={`${meta.hint} · veracity=${value}`}>
+      <span className={cn('inline-flex h-5 items-center rounded-[6px] px-[7px] text-[11.5px]', meta.className)}>{meta.label}</span>
+    </Tooltip>
   )
 }
 
-/** 记忆库徽章：全局库是唯一的语义色（accent）；主机库按库名哈希取色，同库同色、异库异色 */
-function BankBadge({ memory }: { memory: MemoryRow }) {
-  if (memory.host_id == null) return <Badge variant="accent">全局</Badge>
-  const name = memory.host_name ?? `#${memory.host_id}`
-  return (
-    <HashBadge value={name} title={`主机 #${memory.host_id}`}>
-      {name}
-    </HashBadge>
-  )
-}
-
-/** 重要度是 0–1 连续值：数字给精度，色条给跨行可比的量级，二者缺一都要靠脑补 */
+/** 重要度 0–1：十格刻度给跨卡片可比的量级，悬停给精确值 */
 function Importance({ value }: { value: number }) {
-  const ratio = Math.min(Math.max(value, 0), 1)
+  const ticks = Math.round(Math.min(Math.max(value, 0), 1) * 10)
   return (
-    <span className="inline-flex items-center gap-2" title={`重要度 ${value.toFixed(2)}`}>
-      <span className="h-1 w-10 shrink-0 overflow-hidden rounded-full bg-surface-2">
-        <span className="block h-full rounded-full bg-accent" style={{ width: `${ratio * 100}%` }} />
+    <Tooltip content={`重要度 ${value.toFixed(2)}`}>
+      <span className="inline-flex items-center gap-[2px]" aria-label={`重要度 ${value.toFixed(2)}`}>
+        {Array.from({ length: 10 }, (_, i) => (
+          <i key={i} className={cn('h-2.5 w-[3px] rounded-[1.5px]', i < ticks ? 'bg-ink-2' : 'bg-ink-4')} />
+        ))}
       </span>
-      <span className="text-[12px] text-muted tabular-nums">{value.toFixed(2)}</span>
-    </span>
+    </Tooltip>
   )
 }
+
+type Bank = { key: string; name: string; count: number; embedded: number; last?: number | null }
+
+/** 左侧记忆库列表：选中块是共享布局元素，切库时弹簧滑过去 */
+function BankList({ banks, value, onChange }: { banks: Bank[]; value: string; onChange: (key: string) => void }) {
+  return (
+    <nav aria-label="记忆库" className="flex flex-col gap-px">
+      {banks.map((bank) => {
+        const on = bank.key === value
+        const ratio = bank.count ? bank.embedded / bank.count : 0
+        return (
+          <button
+            key={bank.key}
+            type="button"
+            aria-current={on || undefined}
+            onClick={() => onChange(bank.key)}
+            className={cn(
+              'relative grid grid-cols-[minmax(0,1fr)_auto] gap-x-2.5 gap-y-0.5 rounded-well px-2.5 py-[9px] text-left transition-colors duration-150',
+              !on && 'hover:bg-hover',
+            )}
+          >
+            {on && <motion.span layoutId="bank-ind" className="absolute inset-0 rounded-well bg-well shadow-well" transition={spring.snap} />}
+            <span className={cn('relative truncate text-[13px]', on ? 'font-medium' : 'text-ink-2')}>{bank.name}</span>
+            <span className="relative font-mono text-[12px] text-ink-2">
+              <Num value={bank.count} />
+            </span>
+            <span className="relative col-span-2 flex items-center gap-2 text-[11px] text-ink-3">
+              <span className="h-[3px] flex-1 overflow-hidden rounded-full bg-well-2">
+                <span className="block h-full rounded-full bg-ink-3" style={{ width: `${ratio * 100}%` }} />
+              </span>
+              {bank.count === 0 ? '空' : bank.embedded === 0 ? '未向量化' : bank.embedded === bank.count ? '已向量化' : `${bank.embedded}/${bank.count}`}
+            </span>
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
+/** popLayout 需要拿到子元素的 ref 来测量退出前的位置，所以转发给外层 motion.div */
+const MemoryCard = forwardRef<
+  HTMLDivElement,
+  {
+    memory: MemoryRow
+    selecting: boolean
+    selected: boolean
+    onToggle: () => void
+    onDelete: () => void
+  }
+>(function MemoryCard({ memory, selecting, selected, onToggle, onDelete }, ref) {
+  return (
+    <motion.div
+      ref={ref}
+      layout="position"
+      initial={false}
+      exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.14 } }}
+      transition={spring.soft}
+    >
+      <Card
+        className={cn(
+          'group/mem relative px-4 py-3.5 transition-shadow duration-150',
+          selected && 'shadow-[0_0_0_1.5px_var(--ink),0_1px_2px_rgb(0_0_0/.04)]',
+        )}
+      >
+        <div className="flex gap-3">
+          <span className={cn('pt-[3px]', selecting || selected ? 'block' : 'hidden group-hover/mem:block')}>
+            <Checkbox checked={selected} onCheckedChange={onToggle} aria-label={`选择记忆 #${memory.id}`} />
+          </span>
+          <p className="min-w-0 flex-1 text-[13.5px] leading-[1.7] break-words">{memory.content}</p>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-ink-3">
+          <Tag>{memory.host_name ?? (memory.host_id == null ? '全局' : `#${memory.host_id}`)}</Tag>
+          <Veracity value={memory.veracity} />
+          <Importance value={memory.importance} />
+          <span className="tabular-nums">召回 {memory.recall_count} 次</span>
+          <span className="max-w-[16rem] truncate">来自 {memory.source}</span>
+          <span title={`写入 ${formatTime(memory.created_at)}${memory.updated_at > memory.created_at ? ` · 更新 ${formatTime(memory.updated_at)}` : ''}`}>
+            {memory.updated_at > memory.created_at ? '更新于' : '写入于'} {formatAgo(memory.updated_at * 1000)}
+          </span>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`删除记忆 #${memory.id}`}
+            onClick={onDelete}
+            className="ml-auto opacity-0 group-hover/mem:opacity-100 hover:bg-bad-soft hover:text-bad focus-visible:opacity-100"
+          >
+            <Trash />
+          </Button>
+        </div>
+      </Card>
+    </motion.div>
+  )
+})
 
 export function MemoriesPage() {
-  const [bank, setBank] = useState<string>(ALL_BANKS)
+  const [params, setParams] = useSearchParams()
+  const bank = params.get('bank') ?? ALL_BANKS
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
   const [offset, setOffset] = useState(0)
@@ -99,8 +171,7 @@ export function MemoriesPage() {
   }, [search])
 
   useEffect(() => {
-    // 选中项按 id 记录，只对当前这一屏结果有意义：跨库/跨搜索/跨页留着会让批量删除
-    // 误伤此刻根本看不见的记忆。依赖用实际生效的 query 而不是输入框的 search
+    // 选中项只对当前这一屏有意义：跨库 / 跨搜索 / 跨页留着会让批量删除误伤看不见的记忆
     setSelected((prev) => (prev.size === 0 ? prev : new Set()))
   }, [bank, query, offset])
 
@@ -111,337 +182,208 @@ export function MemoriesPage() {
   const deleteMemory = useDeleteMemory()
   const deleteMemories = useDeleteMemories()
 
-  // 统计按 host_id 索引，全局库归到 0——与筛选值的编码保持同一套
-  const statByBank = useMemo(
-    () => new Map((stats.data ?? []).map((item) => [item.host_id ?? 0, item] as const)),
-    [stats.data],
-  )
-
-  const bankOptions = useMemo(() => {
-    const withCount = (label: string, id: number) => {
-      const count = statByBank.get(id)?.count
-      return count ? `${label} · ${count}` : label
+  const banks: Bank[] = useMemo(() => {
+    const list = stats.data ?? []
+    const total = list.reduce((acc, s) => ({ count: acc.count + s.count, embedded: acc.embedded + s.embedded }), { count: 0, embedded: 0 })
+    const global = list.find((s) => s.host_id == null)
+    const hostBanks = list
+      .filter((s) => s.host_id != null)
+      .sort((a, b) => b.count - a.count)
+      .map((s) => ({
+        key: String(s.host_id),
+        name: s.host_name ?? hosts.data?.find((h) => h.id === s.host_id)?.name ?? `#${s.host_id}`,
+        count: s.count,
+        embedded: s.embedded,
+        last: s.last_written,
+      }))
+    // URL 指向一台还没有记忆的主机时，也给它一行，选中态才有落点
+    if (hostId && hostId > 0 && !hostBanks.some((b) => b.key === bank)) {
+      const host = hosts.data?.find((h) => h.id === hostId)
+      hostBanks.push({ key: bank, name: host?.name ?? `#${hostId}`, count: 0, embedded: 0, last: null })
     }
     return [
-      { value: ALL_BANKS, label: '全部记忆库' },
-      { value: GLOBAL_BANK, label: withCount('全局', 0) },
-      ...(hosts.data ?? []).map((host) => ({
-        value: String(host.id),
-        label: withCount(host.name, host.id),
-      })),
+      { key: ALL_BANKS, name: '全部记忆库', ...total },
+      { key: GLOBAL_BANK, name: '全局', count: global?.count ?? 0, embedded: global?.embedded ?? 0, last: global?.last_written },
+      ...hostBanks,
     ]
-  }, [hosts.data, statByBank])
+  }, [stats.data, hosts.data, bank, hostId])
 
-  const totals = useMemo(
-    () =>
-      (stats.data ?? []).reduce(
-        (acc, item) => ({ count: acc.count + item.count, embedded: acc.embedded + item.embedded }),
-        { count: 0, embedded: 0 },
-      ),
-    [stats.data],
-  )
-
-  const rows = memories.data
-  const selectedStat = hostId == null ? undefined : statByBank.get(hostId)
+  const current = banks.find((b) => b.key === bank)
+  const rows = memories.data ?? []
   const narrowed = bank !== ALL_BANKS || query !== '' || offset > 0
-  const isEmpty = !memories.isLoading && rows?.length === 0
-  const hasNext = (rows?.length ?? 0) === PAGE_SIZE
+  const hasNext = rows.length === PAGE_SIZE
+  const total = banks[0]
 
-  const resetFilters = () => {
-    setBank(ALL_BANKS)
-    setSearch('')
-    setQuery('')
+  const changeBank = (key: string) => {
+    const next = new URLSearchParams(params)
+    if (key === ALL_BANKS) next.delete('bank')
+    else next.set('bank', key)
+    setParams(next, { replace: true })
     setOffset(0)
   }
 
-  // 一份筛选条同时驱动桌面表格与移动端卡片（hosts 模式：桌面融进表卡顶部，窄屏独立成卡）。
-  // 记忆库与搜索都走后端语义（host_id 精确匹配 / 防抖后的 LIKE），这里只负责摆布。
-  const filterControls = (
-    <>
-      <Select
-        aria-label="记忆库"
-        className="w-full sm:w-56"
-        value={bank}
-        onChange={(next) => {
-          setBank(next)
-          setOffset(0)
-        }}
-        options={bankOptions}
-      />
-      {/* 选中单个库时，把该库的统计摊在工具行内：省得为一行数字再起一块区域 */}
-      {selectedStat && (
-        <p className="px-1 text-[12px] text-muted tabular-nums sm:ml-auto">
-          本库 {selectedStat.count} 条
-          {selectedStat.last_written != null && ` · 最近写入 ${formatTime(selectedStat.last_written)}`}
-        </p>
-      )}
-      <div className={cn('w-full sm:w-64', !selectedStat && 'sm:ml-auto')}>
-        <Input
-          pill
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="搜索记忆正文"
-          aria-label="搜索记忆正文"
-          spellCheck={false}
-          prefix={<MagnifyingGlass size={14} />}
-        />
-      </div>
-    </>
-  )
-
-  const columns: Column<MemoryRow>[] = [
-    {
-      key: 'content',
-      title: '记忆',
-      render: (memory) => (
-        <p
-          className="line-clamp-2 max-w-[380px] text-[13px] leading-relaxed text-text xl:max-w-[620px]"
-          title={memory.content}
-        >
-          {memory.content}
-        </p>
-      ),
-    },
-    {
-      key: 'bank',
-      title: '记忆库',
-      className: 'w-[1%] whitespace-nowrap',
-      render: (memory) => <BankBadge memory={memory} />,
-    },
-    {
-      key: 'source',
-      title: '来源',
-      className: 'hidden w-[1%] whitespace-nowrap lg:table-cell',
-      render: (memory) => <span className="font-mono text-[12px] text-muted">{memory.source}</span>,
-    },
-    {
-      key: 'importance',
-      title: '重要度',
-      className: 'w-[1%] whitespace-nowrap',
-      render: (memory) => <Importance value={memory.importance} />,
-    },
-    {
-      key: 'veracity',
-      title: '可信度',
-      className: 'hidden w-[1%] whitespace-nowrap xl:table-cell',
-      render: (memory) => <VeracityBadge value={memory.veracity} />,
-    },
-    {
-      key: 'recall_count',
-      title: '召回',
-      className: 'hidden w-[1%] whitespace-nowrap text-muted tabular-nums lg:table-cell',
-      render: (memory) => memory.recall_count,
-    },
-    {
-      key: 'created_at',
-      title: '写入时间',
-      className: 'hidden w-[1%] whitespace-nowrap text-muted tabular-nums lg:table-cell',
-      render: (memory) => (
-        <>
-          <span>{formatTime(memory.created_at)}</span>
-          {memory.updated_at > memory.created_at && (
-            <span className="block text-[11px] text-faint">更新 {formatTime(memory.updated_at)}</span>
-          )}
-        </>
-      ),
-    },
-    {
-      key: 'actions',
-      title: '操作',
-      className: 'w-16 text-right',
-      render: (memory) => (
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={`删除记忆 #${memory.id}`}
-          title="删除记忆"
-          onClick={() => setDeleting(memory)}
-        >
-          <Trash size={16} />
-        </Button>
-      ),
-    },
-  ]
+  const toggle = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
 
   return (
     <PageTransition>
       <PageHeader
-        eyebrow="Memories"
         title="记忆"
-        subtitle="Agent 跨会话记住的运维事实 · 每台主机一个记忆库，另有一个全局库"
+        description="Agent 跨会话积累的运维事实：部署路径、服务拓扑、踩过的坑。每台主机一个独立库，外加一个全局库。"
+        actions={
+          stats.data && (
+            <span className="text-[12px] text-ink-3 tabular-nums">
+              共 {total.count} 条{total.embedded > 0 ? ` · 已向量化 ${total.embedded}` : ' · 未配置语义向量，按关键词召回'}
+            </span>
+          )
+        }
       />
 
-      {stats.isError ? (
-        // 统计失败不该连累列表：缩成一条可重试的提示，页面其余部分照常可用
-        <Card className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-          <p className="text-[13px] text-muted">
-            记忆库统计加载失败：{(stats.error as Error).message}
-          </p>
-          <Button variant="outline" size="sm" onClick={() => void stats.refetch()}>
-            重试
-          </Button>
-        </Card>
-      ) : stats.isLoading ? (
-        <Skeleton className="h-[92px] rounded-container md:h-[104px]" />
-      ) : (
-        <StatGroup>
-          <StatCard title="记忆总数" value={totals.count} suffix="条" />
-          <StatCard title="记忆库" value={stats.data?.length ?? 0} suffix="个" />
-          <StatCard title="已向量化" value={totals.embedded} suffix="条" />
-        </StatGroup>
-      )}
-
-      {/* 窄屏没有表头可融，筛选条保留独立卡片（hosts 模式） */}
-      <Card className="mt-4 flex flex-wrap items-center gap-2 p-2.5 md:hidden">
-        {filterControls}
-      </Card>
-
-      <div className="mt-4">
-        {memories.isError ? (
-          <Card className="flex min-h-[320px] items-center justify-center">
-            <EmptyState
-              icon={<WarningCircle size={24} className="text-danger" />}
-              title="记忆列表加载失败"
-              description={(memories.error as Error).message}
-              action={
-                <Button variant="outline" onClick={() => void memories.refetch()}>
+      <div className="grid items-start gap-3 lg:grid-cols-[264px_minmax(0,1fr)]">
+        <motion.div variants={staggerItem} className="lg:sticky lg:top-5">
+          <Card className="p-1.5">
+            {stats.isError ? (
+              <div className="px-2.5 py-3 text-[12.5px] text-ink-2">
+                记忆库统计加载失败：{(stats.error as Error).message}
+                <Button size="sm" className="mt-2.5" onClick={() => void stats.refetch()}>
                   重试
                 </Button>
-              }
-            />
-          </Card>
-        ) : isEmpty ? (
-          <Card className="flex min-h-[320px] items-center justify-center">
-            {narrowed ? (
-              <EmptyState
-                icon={<MagnifyingGlass size={24} />}
-                title="没有匹配的记忆"
-                description="当前记忆库与关键词下没有结果，换个库或换个词试试。"
-                action={
-                  <Button variant="outline" onClick={resetFilters}>
-                    清除筛选
-                  </Button>
-                }
-              />
-            ) : (
-              <EmptyState
-                icon={<Brain size={24} />}
-                title="还没有记忆"
-                description="Agent 调用 memory_remember 写下的运维事实会出现在这里，之后可被 memory_recall 召回。"
-              />
-            )}
-          </Card>
-        ) : (
-          <div
-            className={cn(
-              'transition-opacity duration-150',
-              // 去抖后的新一页在飞：旧数据留在原位淡一档，比整块骨架屏更不打断阅读
-              memories.isPlaceholderData && 'opacity-60',
-            )}
-          >
-            <Card className="hidden overflow-hidden md:block">
-              {/* 筛选条即表格的标题栏：同一张卡、一条分隔线（与主机页同一套语言） */}
-              <div className="flex items-center gap-2 border-b border-border p-2.5">
-                {filterControls}
               </div>
-              <DataTable
-                columns={columns}
-                rows={rows}
-                rowKey={(memory) => memory.id}
-                loading={memories.isLoading}
-                selection={{ selected, onChange: setSelected }}
+            ) : stats.isLoading ? (
+              <div className="space-y-2 p-2">
+                {Array.from({ length: 5 }, (_, i) => (
+                  <Skeleton key={i} className="h-9" />
+                ))}
+              </div>
+            ) : (
+              <BankList banks={banks} value={bank} onChange={changeBank} />
+            )}
+          </Card>
+        </motion.div>
+
+        <div className="min-w-0">
+          <motion.div variants={staggerItem} className="mb-3 flex flex-wrap items-center gap-2.5">
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="搜索记忆内容"
+              aria-label="搜索记忆内容"
+              spellCheck={false}
+              prefix={<MagnifyingGlass />}
+              wrapperClassName="max-w-[360px] flex-1"
+            />
+            {rows.length > 0 && (
+              <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-ink-2 select-none">
+                <Checkbox
+                  checked={selected.size === 0 ? false : selected.size === rows.length ? true : 'indeterminate'}
+                  onCheckedChange={() => setSelected(selected.size === rows.length ? new Set() : new Set(rows.map((r) => r.id)))}
+                  aria-label="选择本页全部"
+                />
+                本页全选
+              </label>
+            )}
+            {current && bank !== ALL_BANKS && (
+              <span className="ml-auto text-[12px] text-ink-3 tabular-nums">
+                本库 {current.count} 条{current.last ? ` · 最近写入 ${formatAgo(current.last * 1000)}` : ''}
+              </span>
+            )}
+          </motion.div>
+
+          {memories.isError ? (
+            <Card>
+              <EmptyState
+                icon={<WarningCircle />}
+                title="记忆列表加载失败"
+                description={(memories.error as Error).message}
+                action={<Button onClick={() => void memories.refetch()}>重试</Button>}
               />
             </Card>
-
-            <div className="space-y-3 md:hidden">
-              {memories.isLoading
-                ? Array.from({ length: 3 }, (_, index) => (
-                    <Skeleton key={index} className="h-[132px]" />
-                  ))
-                : rows?.map((memory) => (
-                    <Card
-                      key={memory.id}
-                      className={cn('p-4', selected.has(memory.id) && 'border-accent')}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex min-w-0 flex-1 items-start gap-2.5">
-                          <Checkbox
-                            className="mt-0.5"
-                            checked={selected.has(memory.id)}
-                            onCheckedChange={() =>
-                              setSelected((prev) => {
-                                const next = new Set(prev)
-                                if (next.has(memory.id)) next.delete(memory.id)
-                                else next.add(memory.id)
-                                return next
-                              })
-                            }
-                            aria-label={`选择记忆 #${memory.id}`}
-                          />
-                          <p className="min-w-0 flex-1 text-[13px] leading-relaxed text-text">
-                            {memory.content}
-                          </p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="-mt-1 shrink-0"
-                          aria-label={`删除记忆 #${memory.id}`}
-                          title="删除记忆"
-                          onClick={() => setDeleting(memory)}
-                        >
-                          <Trash size={16} />
-                        </Button>
-                      </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <BankBadge memory={memory} />
-                        <span className="font-mono text-[12px] text-muted">{memory.source}</span>
-                        <VeracityBadge value={memory.veracity} />
-                        <Importance value={memory.importance} />
-                      </div>
-                      <p className="mt-2.5 text-[12px] text-muted tabular-nums">
-                        召回 {memory.recall_count} 次 · {formatTime(memory.created_at)}
-                        {memory.updated_at > memory.created_at &&
-                          ` · 更新 ${formatTime(memory.updated_at)}`}
-                      </p>
-                    </Card>
-                  ))}
+          ) : memories.isLoading ? (
+            <div className="space-y-2.5">
+              {Array.from({ length: 4 }, (_, i) => (
+                <Skeleton key={i} className="h-[104px] rounded-card" />
+              ))}
             </div>
+          ) : rows.length === 0 ? (
+            <Card>
+              {narrowed ? (
+                <EmptyState
+                  icon={<MagnifyingGlass />}
+                  title="没有匹配的记忆"
+                  description={query ? `没有包含「${query}」的记录。换个关键词，或者去别的库看看。` : '这个库里还没有记忆。'}
+                  action={
+                    <Button
+                      onClick={() => {
+                        setSearch('')
+                        setQuery('')
+                        setOffset(0)
+                        changeBank(ALL_BANKS)
+                      }}
+                    >
+                      清除筛选
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  icon={<Brain />}
+                  title="还没有记忆"
+                  description="Agent 确认有长期价值的事实后，会用 memory_remember 写进来，之后可被 memory_recall 召回。"
+                />
+              )}
+            </Card>
+          ) : (
+            <div className={cn('flex flex-col gap-2.5 transition-opacity duration-150', memories.isPlaceholderData && 'opacity-60')}>
+              <AnimatePresence mode="popLayout" initial={false}>
+                {rows.map((memory) => (
+                  <MemoryCard
+                    key={memory.id}
+                    memory={memory}
+                    selecting={selected.size > 0}
+                    selected={selected.has(memory.id)}
+                    onToggle={() => toggle(memory.id)}
+                    onDelete={() => setDeleting(memory)}
+                  />
+                ))}
+              </AnimatePresence>
 
-            {(offset > 0 || hasNext) && (
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[12px] text-muted tabular-nums">
-                  第 {offset + 1}–{offset + (rows?.length ?? 0)} 条
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={offset === 0}
-                    onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_SIZE))}
-                  >
-                    上一页
-                  </Button>
-                  {/* 后端不返回总数，只能用「本页取满」判断还有下一页 */}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!hasNext}
-                    onClick={() => setOffset((prev) => prev + PAGE_SIZE)}
-                  >
-                    下一页
-                  </Button>
+              {(offset > 0 || hasNext) && (
+                <div className="mt-1.5 flex items-center justify-between gap-3">
+                  <p className="text-[12px] text-ink-3 tabular-nums">
+                    第 {offset + 1}–{offset + rows.length} 条
+                  </p>
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={offset === 0} onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_SIZE))}>
+                      <CaretLeft />
+                      上一页
+                    </Button>
+                    {/* 后端不返回总数，只能用「本页取满」判断还有下一页 */}
+                    <Button size="sm" disabled={!hasNext} onClick={() => setOffset((prev) => prev + PAGE_SIZE)}>
+                      下一页
+                      <CaretRight />
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       <SelectionBar count={selected.size} onClear={() => setSelected(new Set())}>
-        <Button variant="danger" size="sm" onClick={() => setBatchDeleting(true)}>
+        <button
+          type="button"
+          onClick={() => setBatchDeleting(true)}
+          className="inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-medium"
+        >
+          <Trash size={14} />
           删除
-        </Button>
+        </button>
       </SelectionBar>
 
       <ConfirmDialog
@@ -450,19 +392,18 @@ export function MemoriesPage() {
           if (!open) setDeleting(null)
         }}
         danger
+        icon={<Trash weight="bold" />}
         title="删除这条记忆？"
         description={
           deleting
-            ? `删除后 Agent 将无法再召回它：${deleting.content.slice(0, 60)}${deleting.content.length > 60 ? '…' : ''}`
+            ? `“${deleting.content.slice(0, 60)}${deleting.content.length > 60 ? '…' : ''}” Agent 之后将无法再召回它。如果只是过时了，更好的做法是让 Agent 用 memory_update 修正。`
             : undefined
         }
         confirmText="删除"
         onConfirm={async () => {
           if (!deleting) return
-          // 不吞异常：失败时 mutateAsync 抛出，弹层保持打开可直接重试，
-          // 提示由 mutation 的统一 onError 给
+          // 不吞异常：失败时弹层保持打开可直接重试，提示由 mutation 的统一 onError 给
           await deleteMemory.mutateAsync(deleting.id)
-          // 删成功才摘掉选中项
           setSelected((prev) => {
             if (!prev.has(deleting.id)) return prev
             const next = new Set(prev)
@@ -476,7 +417,8 @@ export function MemoriesPage() {
         open={batchDeleting}
         onOpenChange={setBatchDeleting}
         danger
-        title={`批量删除 ${selected.size} 条记忆？`}
+        icon={<Trash weight="bold" />}
+        title={`删除 ${selected.size} 条记忆？`}
         description="删除后 Agent 将无法再召回这些记忆，此操作不可撤销。"
         confirmText="删除"
         onConfirm={async () => {

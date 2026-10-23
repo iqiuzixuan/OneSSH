@@ -14,10 +14,11 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
       ref={ref}
       aria-invalid={invalid || undefined}
       className={cn(
-        'w-full resize-y rounded-control border bg-surface px-3 py-2 font-mono text-[13px] leading-relaxed text-text',
-        'placeholder:text-faint transition-colors duration-150',
-        'hover:border-border-strong focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none',
-        invalid ? 'border-danger' : 'border-border',
+        'w-full resize-y rounded-ctl bg-surface px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink',
+        'outline-none placeholder:text-ink-3 transition-shadow duration-150',
+        invalid
+          ? 'shadow-[0_0_0_1px_var(--bad)] focus:shadow-[0_0_0_1px_var(--bad),0_0_0_4px_var(--bad-soft)]'
+          : 'shadow-ctl focus:shadow-focus',
         className,
       )}
       {...props}

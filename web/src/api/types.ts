@@ -1,5 +1,14 @@
 /** 后端契约类型：字段名与 Go 侧 JSON tag 一一对应，禁止改名 */
 
+/** 连接池里的连通状态：只在内存，网关重启后从 unknown 开始，时间为毫秒 */
+export type HostHealth = {
+  state: 'online' | 'offline' | 'unknown'
+  checked_at?: number
+  online_since?: number
+  error?: string
+  error_at?: number
+}
+
 export type Host = {
   id: number
   name: string
@@ -15,6 +24,8 @@ export type Host = {
   /** 分组标签，后端保证非 null */
   tags: string[]
   created_at: number
+  /** 仅 GET /hosts 列表携带；创建 / 更新的响应里没有 */
+  health?: HostHealth
 }
 
 export type SSHKey = {
@@ -33,6 +44,12 @@ export type Token = {
   disabled_tools: string[]
   host_ids?: number[]
   created_at: number
+  /** manual = 控制台手工签发；oauth = MCP 客户端经授权页申请 */
+  source: 'manual' | 'oauth' | string
+  /** 以下时间为毫秒 */
+  last_used_at?: number
+  expires_at?: number
+  client_id?: string
   /** 仅创建响应携带的一次性明文 */
   token?: string
 }
@@ -43,8 +60,12 @@ export type JobStatus = {
     host_id: number
     command: string
     cwd: string
+    /** 远端进程号；用 setsid 启动时整组终止 */
+    pid?: number | null
+    used_setsid?: boolean
     status: string
     exit_code: number | null
+    /** 注意：任务的时间戳是「秒」，与命令运行（毫秒）不同 */
     started_at: number
     finished_at: number | null
   }
@@ -80,6 +101,9 @@ export type Audit = {
   ParamsJSON: string
   RunIDs?: string[]
   OK: boolean
+  /** 被网关的权限检查拦下（主机未授权、工具组禁用等）；为真时 OK 必为假 */
+  Denied: boolean
+  ExitCode: { Int64: number; Valid: boolean }
   DurationMS: number
   BytesOut: number
 }
@@ -216,3 +240,72 @@ export type OAuthDecisionPayload = {
 
 /** 无论批准还是拒绝，后端都给出下一跳；拒绝时带 error=access_denied */
 export type OAuthDecisionResult = { redirect_uri: string }
+
+/* ── 概览 / 网关信息 ─────────────────────────────────────────────── */
+
+export type AuditBucket = { start: number; calls: number; denied: number; failed: number }
+
+export type Overview = {
+  window_hours: number
+  bucket_ms: number
+  generated_at: number
+  summary: {
+    since: number
+    calls: number
+    /** 被网关拒绝；与 failed 互斥 */
+    denied: number
+    /** 执行失败（非拒绝） */
+    failed: number
+    buckets: AuditBucket[]
+    tokens: { token_id: number; token_name: string; calls: number; denied: number; last_at: number }[]
+    hosts: { host: string; calls: number; denied: number; failed: number; last_at: number }[]
+    commands: { total: number; succeeded: number; failed: number; running: number }
+  }
+}
+
+export type GatewayInfo = { version: string; started_at: number; listen: string }
+
+/* ── 实时事件（SSE data 字段） ───────────────────────────────────── */
+
+export type ToolCallEventData = {
+  /** 审计 id；与 GET /audit 的 ID 对应 */
+  id?: number
+  tool: string
+  host: string
+  ok: boolean
+  denied?: boolean
+  duration_ms: number
+  summary?: string
+  token_id?: number
+  token_name?: string
+  exit_code?: number
+  run_ids?: string[]
+}
+
+export type CommandStartedEventData = {
+  run_id: string
+  tool: string
+  host: string
+  command: string
+  cwd: string
+  status: 'running'
+  started_at: number
+  token_id?: number
+  token_name?: string
+  session?: string
+}
+
+export type CommandFinishedEventData = {
+  run_id: string
+  tool: string
+  host: string
+  status: CommandRunStatus
+  exit_code: number | null
+  stdout_bytes: number
+  stderr_bytes: number
+  output_available: boolean
+  finished_at: number
+  duration_ms?: number
+}
+
+export type JobStatusEventData = { job_id: string; status: string }

@@ -1,12 +1,13 @@
 import * as SelectPrimitive from '@radix-ui/react-select'
-import { CaretDown, Check } from '@phosphor-icons/react'
+import { CaretUpDown, Check } from '@phosphor-icons/react'
 import { cn } from '@/lib/cn'
 
-export type SelectOption<T extends string | number> = { value: T; label: string }
+export type SelectOption<T extends string | number> = { value: T; label: string; description?: string }
 
 /**
  * Radix Select 的受控封装：对外用真实值类型（number 主机 id 常见），
- * 内部转字符串——Radix 只接受 string，这层转换必须集中，否则各页面各写一遍容易漏。
+ * 内部转字符串——Radix 只接受 string，这层转换必须集中。
+ * 弹层圆角 14、内边距 6，选项圆角 8 = 14 − 6（同心）。
  */
 export function Select<T extends string | number>({
   value,
@@ -27,7 +28,6 @@ export function Select<T extends string | number>({
   disabled?: boolean
   id?: string
   invalid?: boolean
-  /** 触发器的无障碍名：同一控件在桌面/移动各挂一份时用它在两处都能命名，避免共享 id */
   'aria-label'?: string
 }) {
   const isNumeric = options.length > 0 && typeof options[0].value === 'number'
@@ -42,39 +42,44 @@ export function Select<T extends string | number>({
         aria-label={ariaLabel}
         aria-invalid={invalid || undefined}
         className={cn(
-          'inline-flex h-9 w-full items-center justify-between gap-2 rounded-control border bg-surface px-3 text-sm text-text',
-          'transition-colors duration-150 hover:border-border-strong',
-          'focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none',
-          'disabled:cursor-not-allowed disabled:opacity-60 data-[placeholder]:text-muted',
-          invalid ? 'border-danger' : 'border-border',
+          'inline-flex h-8 w-full items-center justify-between gap-2 rounded-ctl bg-surface px-2.5 text-[13px] text-ink shadow-ctl',
+          'outline-none transition-shadow duration-150 focus-visible:shadow-focus',
+          'disabled:cursor-not-allowed disabled:opacity-60 data-[placeholder]:text-ink-3',
+          invalid && 'shadow-[0_0_0_1px_var(--bad)]',
           className,
         )}
       >
-        <SelectPrimitive.Value placeholder={placeholder} />
+        <span className="truncate">
+          <SelectPrimitive.Value placeholder={placeholder} />
+        </span>
         <SelectPrimitive.Icon>
-          <CaretDown size={14} className="text-muted" />
+          <CaretUpDown size={14} className="text-ink-3" />
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
         <SelectPrimitive.Content
           position="popper"
           sideOffset={6}
-          className="z-50 max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-container border border-border bg-surface p-1 shadow-pop"
+          className={cn(
+            'z-[70] max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-pop bg-surface p-1.5 shadow-pop',
+            'origin-[var(--radix-select-content-transform-origin)] data-[state=open]:animate-pop-in',
+          )}
         >
           <SelectPrimitive.Viewport>
             {options.map((o) => (
               <SelectPrimitive.Item
                 key={String(o.value)}
                 value={String(o.value)}
-                className="relative flex cursor-pointer items-center rounded-control py-1.5 pr-8 pl-3 text-sm text-text select-none data-[highlighted]:bg-surface-2 data-[highlighted]:outline-none"
+                className="relative flex h-8 cursor-pointer items-center gap-2 rounded-pop-in pr-8 pl-2.5 text-[13px] text-ink outline-none select-none data-[highlighted]:bg-hover-2"
               >
                 <SelectPrimitive.ItemText>{o.label}</SelectPrimitive.ItemText>
+                {o.description && <span className="truncate font-mono text-[11px] text-ink-3">{o.description}</span>}
                 <SelectPrimitive.ItemIndicator className="absolute right-2.5">
-                  <Check size={14} className="text-accent" />
+                  <Check size={14} />
                 </SelectPrimitive.ItemIndicator>
               </SelectPrimitive.Item>
             ))}
-            {options.length === 0 && <p className="px-3 py-2 text-[13px] text-muted">暂无选项</p>}
+            {options.length === 0 && <p className="px-2.5 py-2 text-[12.5px] text-ink-3">暂无选项</p>}
           </SelectPrimitive.Viewport>
         </SelectPrimitive.Content>
       </SelectPrimitive.Portal>

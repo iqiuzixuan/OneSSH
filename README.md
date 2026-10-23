@@ -103,11 +103,11 @@ flowchart LR
     Gateway -->|"SSH · SFTP"| H1
     Gateway -->|"SSH · SFTP"| H2
 
-    classDef gw fill:#0d9488,stroke:#0f766e,color:#ffffff
+    classDef gw fill:#19191b,stroke:#3a3a3e,color:#fafaf8
     class Gateway gw
 ```
 
-后端只用 Go 标准库的 HTTP 路由，配合 `modelcontextprotocol/go-sdk`、`x/crypto/ssh`、`pkg/sftp` 和 CGO-free 的纯 Go SQLite。前端是 React 18 + React Router 7 + TanStack Query + Tailwind CSS v4，在 Radix UI 之上自建组件体系（浅色 / 深色 / 跟随系统三档主题），终端用 Ghostty Web 的 WASM + Canvas 实现，图表用 Recharts，最后由 `go:embed` 整体打进二进制——部署物就是一个文件。
+后端只用 Go 标准库的 HTTP 路由，配合 `modelcontextprotocol/go-sdk`、`x/crypto/ssh`、`pkg/sftp` 和 CGO-free 的纯 Go SQLite。前端是 React 18 + React Router 7 + TanStack Query + Tailwind CSS v4，在 Radix UI 之上自建「静流」组件体系：界面单色、颜色只表达状态，浅色 / 深色 / 跟随系统三档主题；动效用 motion，滚动数字用 NumberFlow，命令面板用 cmdk，侧滑面板用 vaul。终端用 Ghostty Web 的 WASM + Canvas 实现，图表为轻量 SVG；页面按路由懒加载，最后由 `go:embed` 整体打进二进制——部署物就是一个文件。
 
 ## 能力总览
 
@@ -124,7 +124,7 @@ flowchart LR
 | **多媒体** | PNG、JPEG、GIF 首帧、WebP 的查看与缩放 |
 | **监控** | Linux CPU、内存、负载、磁盘指标采集，保留 7 天 |
 | **记忆** | 每台主机独立 bank + 全局 bank；FTS5、重要度与时近度混合召回，可选 OpenAI 兼容语义向量 |
-| **控制台** | React 管理界面、记忆筛选与删除、SSE 实时活动流、Ghostty Web 浏览器终端 |
+| **控制台** | 概览「流量带」实时呈现 Agent → 网关 → 主机的每次调用；拒绝与失败分开审计；主机连通状态、命令运行详情、令牌签发向导；记忆筛选与删除、SSE 实时活动流、Ghostty Web 浏览器终端 |
 | **审计** | 结构化审计记录，保留调用令牌名称与 ID；文件正文与编辑内容只留长度摘要 |
 
 ## MCP 接入

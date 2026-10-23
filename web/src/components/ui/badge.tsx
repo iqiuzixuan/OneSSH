@@ -1,126 +1,151 @@
+import { forwardRef } from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/cn'
 
-/** 徽章全胶囊，与按钮、标签页同属胶囊家族 */
-const BADGE_BASE =
-  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap'
-
-const badge = cva(BADGE_BASE, {
-  variants: {
-    variant: {
-      default: 'bg-surface-2 text-muted',
-      // 彩色徽章带描边（demo 的 .chip.ok/.warn/.err）：同色边框 + 软底 + 深字
-      accent: 'border border-accent/45 bg-accent-soft text-accent-ink',
-      success: 'border border-success/40 bg-success/12 text-success',
-      warning: 'border border-warning/45 bg-warning/12 text-warning',
-      danger: 'border border-danger/40 bg-danger/12 text-danger',
-      // 蓝色留给「推断/参考性」这类次等信息，与 Chip 的 info 色调一致，不占主题色
-      info: 'border border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400',
-      outline: 'border border-border text-muted',
-    },
-  },
-  defaultVariants: { variant: 'default' },
-})
-
-export type BadgeProps = React.HTMLAttributes<HTMLSpanElement> & VariantProps<typeof badge>
-
-export function Badge({ className, variant, ...props }: BadgeProps) {
-  return <span className={cn(badge({ variant }), className)} {...props} />
-}
-
 /**
- * 值即徽章的哈希取色：djb2 哈希直接映射成色相（360 取色），
- * 同一个值永远同一个颜色，不同的值几乎必然不同色——枚举池再大也会撞，色相环不会。
- * 样式是 demo 的 .chip.ok：同色描边 + 软底填充 + 深字；色相走 CSS 变量，换主题色不影响分类色。
+ * 状态的四种语义色：ok 绿、warn 琥珀、bad 红，其余一律中性灰。
+ * 界面里出现颜色，就意味着有状态值得看——不要把颜色用来做装饰或区分类别。
  */
-export function HashBadge({
-  value,
+export type Tone = 'neutral' | 'ok' | 'warn' | 'bad'
+
+/** 状态点：7px 实心圆；idle 是空心圈（未监控 / 未知）；live 在外圈加一道呼吸涟漪 */
+export function Dot({
+  tone = 'neutral',
+  idle,
+  live,
   className,
-  ...props
-}: React.HTMLAttributes<HTMLSpanElement> & { value: string }) {
-  let hash = 5381
-  for (let index = 0; index < value.length; index++) {
-    hash = (hash * 33) ^ value.charCodeAt(index)
-  }
-  const hue = (hash >>> 0) % 360
+  label,
+}: {
+  tone?: Tone
+  idle?: boolean
+  live?: boolean
+  className?: string
+  /** 给读屏的状态说明；不传则视为装饰 */
+  label?: string
+}) {
   return (
     <span
-      {...props}
-      style={{ '--hb-hue': hue, ...props.style } as React.CSSProperties}
+      role={label ? 'img' : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
       className={cn(
-        BADGE_BASE,
-        'border border-[hsl(var(--hb-hue)_62%_68%)] bg-[hsl(var(--hb-hue)_72%_93%)] text-[hsl(var(--hb-hue)_58%_35%)]',
-        'dark:border-[hsl(var(--hb-hue)_42%_45%)] dark:bg-[hsl(var(--hb-hue)_40%_24%)] dark:text-[hsl(var(--hb-hue)_70%_72%)]',
+        'relative inline-block size-[7px] shrink-0 rounded-full',
+        idle
+          ? 'bg-transparent shadow-[inset_0_0_0_1.5px_var(--ink-3)]'
+          : tone === 'ok'
+            ? 'bg-ok text-ok'
+            : tone === 'warn'
+              ? 'bg-warn text-warn'
+              : tone === 'bad'
+                ? 'bg-bad text-bad'
+                : 'bg-ink-4 text-ink-4',
         className,
       )}
-    />
+    >
+      {live && !idle && (
+        <span className="absolute -inset-1 animate-live rounded-full bg-current opacity-0" aria-hidden />
+      )}
+    </span>
   )
 }
 
-/**
- * 大写描边小签（demo 的 .chip）：主机/会话等持续状态的标识，
- * 与 Badge（填充底、内容标签）区分开——Chip 描边实色、字号更小、全大写。
- */
-const chip = cva(
-  'inline-flex items-center rounded-full border px-[9px] py-[3px] text-[9.5px] font-medium tracking-[0.1em] whitespace-nowrap uppercase',
+/** 胶囊：状态文字标签，如「在线」「运行中」「失败」 */
+const pill = cva(
+  'inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium whitespace-nowrap [&>span:first-child]:size-1.5',
   {
     variants: {
       tone: {
-        neutral: 'border-border text-muted',
-        accent: 'border-accent bg-accent-soft text-accent-ink',
-        warning:
-          'border-warning bg-[color-mix(in_srgb,var(--warning)_9%,transparent)] text-warning',
-        danger: 'border-danger bg-[color-mix(in_srgb,var(--danger)_9%,transparent)] text-danger',
-        info: 'border-blue-500 bg-blue-500/10 text-blue-600 dark:border-blue-400 dark:text-blue-400',
+        neutral: 'bg-well-2 text-ink-2',
+        ok: 'bg-ok-soft text-ok',
+        warn: 'bg-warn-soft text-warn',
+        bad: 'bg-bad-soft text-bad',
       },
     },
     defaultVariants: { tone: 'neutral' },
   },
 )
 
-export type ChipProps = React.HTMLAttributes<HTMLSpanElement> & VariantProps<typeof chip>
-
-export function Chip({ className, tone, ...props }: ChipProps) {
-  return <span className={cn(chip({ tone }), className)} {...props} />
+export function Pill({
+  tone,
+  dot,
+  live,
+  className,
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLSpanElement> & VariantProps<typeof pill> & { dot?: boolean; live?: boolean }) {
+  return (
+    <span className={cn(pill({ tone }), className)} {...props}>
+      {dot && <Dot tone={tone ?? 'neutral'} live={live} />}
+      {children}
+    </span>
+  )
 }
 
-/** 状态点：running 场景加脉冲 */
-export function Dot({ className, pulse }: { className?: string; pulse?: boolean }) {
+/** 标签：等宽小字，用于工具类别（EXEC / FILE）、主机标签、退出码这类「代码味」的值 */
+export function Tag({
+  tone = 'neutral',
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLSpanElement> & { tone?: Tone }) {
   return (
     <span
-      className={cn('inline-block size-1.5 rounded-full bg-current', pulse && 'animate-pulse', className)}
-      aria-hidden
+      className={cn(
+        'inline-flex h-5 shrink-0 items-center rounded-[6px] px-1.5 font-mono text-[10.5px] leading-none font-medium tracking-[0.03em] whitespace-nowrap',
+        tone === 'bad'
+          ? 'bg-bad-soft text-bad'
+          : tone === 'warn'
+            ? 'bg-warn-soft text-warn'
+            : tone === 'ok'
+              ? 'bg-ok-soft text-ok'
+              : 'bg-well-2 text-ink-2',
+        className,
+      )}
+      {...props}
     />
   )
 }
 
 /**
- * LED 状态灯：带 3px 同色拉丝光晕的状态点，用于主机在线/忙碌/异常等持续状态。
- * 光晕用 color-mix 从状态色派生，不新增令牌。
+ * 筛选芯片：可点击的小胶囊，选中时反转为实心墨色。
+ * 用于标签筛选、快捷命令这类「一排平铺、可多选」的场景。
  */
-export function Led({
-  tone,
-  pulse,
-  className,
-}: {
-  tone: 'on' | 'busy' | 'err' | 'off'
-  pulse?: boolean
-  className?: string
-}) {
+export const Chip = forwardRef<
+  HTMLButtonElement,
+  React.ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean; mono?: boolean }
+>(function Chip({ active, mono, className, type = 'button', ...props }, ref) {
+  return (
+    <button
+      ref={ref}
+      type={type}
+      aria-pressed={active}
+      className={cn(
+        'inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-full px-2 text-[11.5px] whitespace-nowrap',
+        'transition-[background-color,color,box-shadow,transform] duration-150 active:scale-[0.96]',
+        mono && 'font-mono text-[11px]',
+        active
+          ? 'bg-primary text-primary-fg'
+          : 'bg-well text-ink-2 shadow-[inset_0_0_0_1px_var(--edge)] hover:bg-well-2 hover:text-ink',
+        className,
+      )}
+      {...props}
+    />
+  )
+})
+
+/** 头像块：令牌 / Agent 的两字母缩写，等宽字，中性底 */
+export function Initials({ name, className }: { name: string; className?: string }) {
+  // 取首个词的前两个字母：Claude Code / Codex CLI / Cursor 都以 C 开头，按词首字母会撞成 CC
+  const word = name.replace(/[^A-Za-z0-9\u4e00-\u9fa5]+/g, ' ').trim().split(/\s+/)[0] ?? ''
+  const letters = (/^[\u4e00-\u9fa5]/.test(word) ? word.slice(0, 1) : word.slice(0, 2)).toUpperCase() || '··'
   return (
     <span
       aria-hidden
       className={cn(
-        'inline-block size-[7px] shrink-0 rounded-full',
-        tone === 'on' && 'bg-accent shadow-[0_0_0_3px_var(--accent-soft)]',
-        tone === 'busy' &&
-          'bg-warning shadow-[0_0_0_3px_color-mix(in_srgb,var(--warning)_15%,transparent)]',
-        tone === 'err' &&
-          'bg-danger shadow-[0_0_0_3px_color-mix(in_srgb,var(--danger)_12%,transparent)]',
-        tone === 'off' && 'bg-border-strong',
-        pulse && 'animate-pulse',
+        'grid size-8 shrink-0 place-items-center rounded-[9px] bg-well-2 font-mono text-[11px] font-semibold text-ink-2 shadow-well',
         className,
       )}
-    />
+    >
+      {letters}
+    </span>
   )
 }

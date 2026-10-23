@@ -1,6 +1,6 @@
 import { X } from '@phosphor-icons/react'
 import { AnimatePresence, motion } from 'motion/react'
-import { popTransition } from '@/lib/motion'
+import { spring } from '@/lib/motion'
 import { Button } from './button'
 
 /**
@@ -34,20 +34,16 @@ export function SelectionBar({
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 12 }}
-            transition={popTransition}
+            transition={spring.soft}
           >
-            <div className="flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pr-1.5 pl-4 shadow-pop">
-              <span
-                aria-hidden="true"
-                className="text-[13px] whitespace-nowrap text-muted tabular-nums"
-              >
+            <div className="flex items-center gap-2 rounded-full bg-primary py-1.5 pr-1.5 pl-4 text-primary-fg shadow-[0_8px_24px_-6px_rgb(0_0_0/.35)] [&_button]:bg-transparent [&_button]:text-primary-fg [&_button]:shadow-none [&_button:hover]:bg-white/10">
+              <span aria-hidden="true" className="text-[12.5px] font-medium whitespace-nowrap tabular-nums">
                 已选 {count} 项
               </span>
               {children}
               <Button
                 variant="ghost"
-                size="icon"
-                className="size-7"
+                size="icon-sm"
                 aria-label="清除选择"
                 title="清除选择"
                 onClick={onClear}

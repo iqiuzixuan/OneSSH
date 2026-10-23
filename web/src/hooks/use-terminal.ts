@@ -12,6 +12,17 @@ let ghosttyReady: Promise<void> | undefined
  */
 const HANDSHAKE_TIMEOUT = 15_000
 
+/** 终端配色取自静流的 --term-* token；Canvas 只认具体色值，所以在连接时读一次计算值 */
+function terminalTheme() {
+  const css = getComputedStyle(document.documentElement)
+  const read = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback
+  return {
+    background: read('--term-screen', '#0b0b0a'),
+    foreground: read('--term-fg', '#e6e4de'),
+    cursor: read('--term-fg', '#e6e4de'),
+  }
+}
+
 export function useTerminal() {
   const mountRef = useRef<HTMLDivElement>(null)
   const terminal = useRef<GhosttyTerminal>()
@@ -20,8 +31,11 @@ export function useTerminal() {
   // 每次 connect 递增：异步回调用它判断自己是否已被后来的连接取代
   const attempt = useRef(0)
   const [status, setStatus] = useState<TerminalStatus>('idle')
-  // 窗口栏标题要展示 `80×24` 这类几何信息，跟随 fit/resize 更新
+  // 状态栏展示 `120×32` 这类几何信息，跟随 fit/resize 更新
   const [size, setSize] = useState<{ cols: number; rows: number } | null>(null)
+  /** 当前（或最近一次尝试）的主机名与会话建立时间 */
+  const [host, setHost] = useState<string>()
+  const [connectedAt, setConnectedAt] = useState<number>()
 
   /** 拆掉旧连接的回调再关闭，否则它的 onclose 会覆盖新连接的状态 */
   const detach = useCallback(() => {
@@ -49,6 +63,22 @@ export function useTerminal() {
     setStatus((prev) => (prev === 'connected' ? 'closed' : 'idle'))
   }, [detach])
 
+  /** 把一段文本当作键盘输入送往远端 shell（快捷命令用），只在已连接时生效 */
+  const send = useCallback((text: string) => {
+    const ws = socket.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    ws.send(JSON.stringify({ type: 'input', data: text }))
+    terminal.current?.focus()
+    return true
+  }, [])
+
+  const clear = useCallback(() => {
+    terminal.current?.clear()
+    terminal.current?.focus()
+  }, [])
+
+  const focus = useCallback(() => terminal.current?.focus(), [])
+
   const connect = useCallback(
     async (hostName: string) => {
       const mount = mountRef.current
@@ -56,6 +86,8 @@ export function useTerminal() {
 
       const token = (attempt.current += 1)
       detach()
+      setHost(hostName)
+      setConnectedAt(undefined)
       setStatus('connecting')
 
       try {
@@ -65,9 +97,7 @@ export function useTerminal() {
         // 失败的 promise 会被永久缓存，清掉才允许下次重试
         ghosttyReady = undefined
         if (attempt.current !== token) return
-        toast.error(
-          `Ghostty WASM 初始化失败：${error instanceof Error ? error.message : String(error)}`,
-        )
+        toast.error(`Ghostty WASM 初始化失败：${error instanceof Error ? error.message : String(error)}`)
         setStatus('error')
         return
       }
@@ -80,8 +110,8 @@ export function useTerminal() {
       // 非等宽 fallback 画进既定单元格，造成字符重叠。
       try {
         const loaded = await Promise.all([
-          document.fonts.load('400 14px "JetBrainsMono Nerd Font Mono"'),
-          document.fonts.load('700 14px "JetBrainsMono Nerd Font Mono"'),
+          document.fonts.load('400 13px "JetBrainsMono Nerd Font Mono"'),
+          document.fonts.load('700 13px "JetBrainsMono Nerd Font Mono"'),
         ])
         if (loaded.some((faces) => faces.length === 0)) throw new Error('font face missing')
       } catch {
@@ -95,8 +125,8 @@ export function useTerminal() {
       const term = new GhosttyTerminal({
         cursorBlink: true,
         fontFamily: '"JetBrainsMono Nerd Font Mono", "PingFang SC", monospace',
-        fontSize: 14,
-        theme: { background: '#0b0d10', foreground: '#d6e4ff' },
+        fontSize: 13,
+        theme: terminalTheme(),
       })
       const fit = new FitAddon()
       term.loadAddon(fit)
@@ -120,6 +150,7 @@ export function useTerminal() {
         window.clearTimeout(watchdog.current)
         if (attempt.current !== token) return
         term.focus()
+        setConnectedAt(Date.now())
         setStatus('connected')
       }
       // 不挂 onerror：握手失败时它只是 onclose 的前奏，提示集中在 onclose 才不会弹两次
@@ -143,10 +174,7 @@ export function useTerminal() {
         setStatus('error')
       }, HANDSHAKE_TIMEOUT)
 
-      term.onData(
-        (data) =>
-          ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'input', data })),
-      )
+      term.onData((data) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'input', data })))
       term.onResize(({ cols, rows }) => {
         setSize({ cols, rows })
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }))
@@ -155,5 +183,5 @@ export function useTerminal() {
     [detach],
   )
 
-  return { mountRef, status, size, connect, disconnect }
+  return { mountRef, status, size, host, connectedAt, connect, disconnect, send, clear, focus }
 }

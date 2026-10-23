@@ -1,310 +1,242 @@
-import { useState } from 'react'
-import { Controller, useForm } from 'react-hook-form'
-import { Check, Copy, Key, Plus, Trash } from '@phosphor-icons/react'
+import { DownloadSimple, Key, Plus } from '@phosphor-icons/react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { toast } from 'sonner'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useForm } from 'react-hook-form'
 import { useCreateKey, useDeleteKey, useDeleteKeys, useHosts, useKeys } from '@/api/queries'
 import type { KeyPayload, SSHKey } from '@/api/types'
+import { KeyCard } from '@/components/keys/key-card'
 import { ConfirmDialog } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/ui/page-header'
 import { PageTransition } from '@/components/ui/page-transition'
-import { Select } from '@/components/ui/select'
+import { Segmented } from '@/components/ui/segmented'
 import { SelectionBar } from '@/components/ui/selection-bar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
-import { cn } from '@/lib/cn'
-import { formatTime } from '@/lib/format'
-import { staggerContainer, staggerItem } from '@/lib/motion'
+import { staggerItem } from '@/lib/motion'
 
-type KeyFormValues = {
-  name: string
+type KeyFormValues = { name: string; private_key: string }
+
+/** 生成 / 导入共用一个对话框：模式切换时私钥框随高度展开，对话框跟着长，不会突然跳一截 */
+function KeyDialog({
+  open,
+  mode,
+  onModeChange,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean
   mode: KeyPayload['mode']
-  private_key: string
-}
+  onModeChange: (mode: KeyPayload['mode']) => void
+  onOpenChange: (open: boolean) => void
+  onCreated: (key: SSHKey) => void
+}) {
+  const createKey = useCreateKey()
+  const reduceMotion = useReducedMotion()
+  const {
+    handleSubmit,
+    register,
+    reset,
+    formState: { errors },
+  } = useForm<KeyFormValues>({ defaultValues: { name: '', private_key: '' } })
 
-const defaultValues: KeyFormValues = {
-  name: '',
-  mode: 'generate',
-  private_key: '',
+  useEffect(() => {
+    if (open) reset({ name: '', private_key: '' })
+  }, [open, reset])
+
+  const submit = handleSubmit(async (values) => {
+    const key = await createKey.mutateAsync({
+      name: values.name.trim(),
+      mode,
+      private_key: mode === 'import' ? values.private_key : undefined,
+    })
+    onOpenChange(false)
+    onCreated(key)
+  })
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      size="md"
+      icon={<Key />}
+      title={mode === 'generate' ? '生成密钥' : '导入私钥'}
+      description={
+        mode === 'generate'
+          ? '网关生成一把 ed25519 密钥，私钥加密入库、永不返回；把公钥加入目标主机的 authorized_keys 即可使用。'
+          : '粘贴已有的 OpenSSH 私钥。导入后只保留加密副本，任何接口都不会再返回明文。'
+      }
+      footer={
+        <>
+          <Button onClick={() => onOpenChange(false)}>取消</Button>
+          <Button variant="primary" type="submit" form="key-form" loading={createKey.isPending}>
+            {mode === 'generate' ? '生成' : '导入'}
+          </Button>
+        </>
+      }
+    >
+      <form id="key-form" onSubmit={submit} className="space-y-4">
+        <Segmented
+          value={mode}
+          onChange={onModeChange}
+          aria-label="创建方式"
+          className="flex w-full [&>button]:flex-1"
+          options={[
+            { value: 'generate', label: '生成 ed25519' },
+            { value: 'import', label: '导入 OpenSSH 私钥' },
+          ]}
+        />
+        <Field label="名称" required error={errors.name?.message}>
+          {(id) => (
+            <Input
+              id={id}
+              autoFocus
+              placeholder="例如 deploy-ed25519"
+              invalid={Boolean(errors.name)}
+              className="font-mono text-[12.5px]"
+              {...register('name', { validate: (v) => v.trim() !== '' || '请输入名称' })}
+            />
+          )}
+        </Field>
+        <AnimatePresence initial={false}>
+          {mode === 'import' && (
+            <motion.div
+              key="private-key"
+              className="overflow-hidden"
+              initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+              transition={{ duration: reduceMotion ? 0 : 0.22, ease: 'easeOut' }}
+            >
+              {/* 负外边距补回 overflow-hidden 裁掉的焦点环空间 */}
+              <div className="-m-1 p-1">
+                <Field label="私钥" required error={errors.private_key?.message}>
+                  {(id) => (
+                    <Textarea
+                      id={id}
+                      rows={8}
+                      spellCheck={false}
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                      invalid={Boolean(errors.private_key)}
+                      {...register('private_key', { required: mode === 'import' ? '请粘贴私钥' : false })}
+                    />
+                  )}
+                </Field>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </form>
+    </Dialog>
+  )
 }
 
 export function KeysPage() {
   const keys = useKeys()
   const hosts = useHosts()
-  const createKey = useCreateKey()
   const deleteKey = useDeleteKey()
   const deleteKeys = useDeleteKeys()
-  const reduceMotion = useReducedMotion()
-  const [createOpen, setCreateOpen] = useState(false)
+  const [dialog, setDialog] = useState<{ open: boolean; mode: KeyPayload['mode'] }>({ open: false, mode: 'generate' })
   const [deleting, setDeleting] = useState<SSHKey | null>(null)
-  const [selected, setSelected] = useState<Set<number>>(new Set())
   const [batchDeleting, setBatchDeleting] = useState(false)
-  const [copiedId, setCopiedId] = useState<number | null>(null)
-  const {
-    control,
-    handleSubmit,
-    register,
-    reset,
-    watch,
-    formState: { errors },
-  } = useForm<KeyFormValues>({ defaultValues })
-  const mode = watch('mode')
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  // 首屏已有的卡片不播入场；新生成 / 导入的那张从 0.96 弹进来
+  const initialIds = useRef<Set<number> | null>(null)
+  if (initialIds.current == null && keys.data) initialIds.current = new Set(keys.data.map((key) => key.id))
 
-  // 引用数决定删除的破坏力，直接摆在卡片与确认弹层里，比事后翻主机页可靠。
-  const usageOf = (keyId: number) =>
-    (hosts.data ?? []).filter((host) => host.key_id === keyId).length
-
-  const openCreate = () => {
-    reset(defaultValues)
-    setCreateOpen(true)
-  }
-
-  const changeCreateOpen = (open: boolean) => {
-    setCreateOpen(open)
-    if (!open) reset(defaultValues)
-  }
-
-  const create = async (values: KeyFormValues) => {
-    await createKey.mutateAsync({
-      name: values.name,
-      mode: values.mode,
-      private_key: values.mode === 'import' ? values.private_key : undefined,
-    })
-    setCreateOpen(false)
-    reset(defaultValues)
-  }
-
-  const copyPublicKey = async (key: SSHKey) => {
-    try {
-      await navigator.clipboard.writeText(key.public_key)
-      // 图标就地变勾比只弹 toast 更贴近操作发生的位置
-      setCopiedId(key.id)
-      setTimeout(() => setCopiedId((current) => (current === key.id ? null : current)), 1600)
-      toast.success('公钥已复制')
-    } catch {
-      toast.error('复制失败，请手动选择文本')
+  // 引用数决定删除的破坏力，直接摆在卡片与确认弹层里，比事后翻主机页可靠
+  const usage = useMemo(() => {
+    const map = new Map<number, NonNullable<typeof hosts.data>>()
+    for (const host of hosts.data ?? []) {
+      if (host.auth_type !== 'key' || host.key_id == null) continue
+      map.set(host.key_id, [...(map.get(host.key_id) ?? []), host])
     }
-  }
+    return map
+  }, [hosts.data])
+
+  const toggle = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const deletingUsage = deleting ? (usage.get(deleting.id)?.length ?? 0) : 0
+  const batchUsage = [...selected].reduce((sum, id) => sum + (usage.get(id)?.length ?? 0), 0)
 
   return (
     <PageTransition>
       <PageHeader
-        eyebrow="Keys"
         title="密钥"
-        subtitle="OpenSSH ed25519 生成与私钥导入"
+        description="私钥由主密钥经 AES-256-GCM 加密存储，任何接口都不会返回私钥明文——这里只能看到公钥与指纹。"
         actions={
-          <Button variant="primary" onClick={openCreate}>
-            <Plus size={15} />
-            新建密钥
-          </Button>
+          <>
+            <Button onClick={() => setDialog({ open: true, mode: 'import' })}>
+              <DownloadSimple />
+              导入私钥
+            </Button>
+            <Button variant="primary" onClick={() => setDialog({ open: true, mode: 'generate' })}>
+              <Plus />
+              生成 ed25519
+            </Button>
+          </>
         }
       />
 
       {keys.isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 3 }, (_, index) => (
-            <Skeleton key={index} className="h-[173px] rounded-container" />
+            <Skeleton key={index} className="h-[188px] rounded-card" />
           ))}
         </div>
       ) : keys.data?.length ? (
-        <motion.div
-          className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
-          variants={staggerContainer}
-          initial="hidden"
-          animate="visible"
-        >
-          {keys.data.map((key) => {
-            // 公钥首段是算法标识，单独成行后剩下的 base64 才是真正需要核对的材料
-            const spaceAt = key.public_key.indexOf(' ')
-            const algorithm = spaceAt > 0 ? key.public_key.slice(0, spaceAt) : 'ssh-key'
-            const material = spaceAt > 0 ? key.public_key.slice(spaceAt + 1) : key.public_key
-            const usage = usageOf(key.id)
-            return (
-              <motion.div key={key.id} variants={staggerItem}>
-                <Card
-                  className={cn(
-                    'flex h-full flex-col p-4',
-                    selected.has(key.id) && 'border-accent',
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 items-start gap-2.5">
-                      <Checkbox
-                        className="mt-0.5"
-                        checked={selected.has(key.id)}
-                        onCheckedChange={() =>
-                          setSelected((prev) => {
-                            const next = new Set(prev)
-                            if (next.has(key.id)) next.delete(key.id)
-                            else next.add(key.id)
-                            return next
-                          })
-                        }
-                        aria-label={`选择密钥 ${key.name}`}
-                      />
-                      <div className="min-w-0">
-                        <p className="truncate leading-5 font-medium text-text">{key.name}</p>
-                        <p className="mt-1 truncate text-[12px] text-muted">
-                          <span className="tabular-nums">{formatTime(key.created_at)}</span>
-                          <span className="px-1.5">·</span>
-                          {usage > 0 ? `${usage} 台主机在用` : '暂无主机使用'}
-                        </p>
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="-mt-1 -mr-1 shrink-0 text-muted hover:bg-danger/10 hover:text-danger"
-                      aria-label={`删除密钥 ${key.name}`}
-                      title="删除密钥"
-                      onClick={() => setDeleting(key)}
-                    >
-                      <Trash size={16} />
-                    </Button>
-                  </div>
-                  <div className="relative mt-3 grow rounded-control bg-surface-2 p-3 pr-11">
-                    <p className="font-mono text-[11px] text-muted">{algorithm}</p>
-                    {/* select-all：单击即可整段选中，长 base64 手动拖选很痛苦 */}
-                    <p className="mt-1 line-clamp-2 leading-[1.7] font-mono text-[12px] break-all text-text select-all">
-                      {material}
-                    </p>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute top-1.5 right-1.5 h-8 w-8"
-                      aria-label={`复制公钥 ${key.name}`}
-                      title="复制公钥"
-                      onClick={() => void copyPublicKey(key)}
-                    >
-                      {copiedId === key.id ? (
-                        <Check size={14} className="text-success" />
-                      ) : (
-                        <Copy size={14} />
-                      )}
-                    </Button>
-                  </div>
-                </Card>
-              </motion.div>
-            )
-          })}
+        <motion.div variants={staggerItem} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <AnimatePresence initial={false}>
+            {keys.data.map((key) => (
+              <KeyCard
+                key={key.id}
+                sshKey={key}
+                usedBy={usage.get(key.id) ?? []}
+                selected={selected.has(key.id)}
+                selectionMode={selected.size > 0}
+                fresh={!initialIds.current?.has(key.id)}
+                onToggle={() => toggle(key.id)}
+                onDelete={() => setDeleting(key)}
+              />
+            ))}
+          </AnimatePresence>
         </motion.div>
       ) : (
-        // 空态收进卡片层：与令牌/任务等页同一套「320px 居中空卡」语言，而不是漂在页面底色上
-        <Card className="flex min-h-[320px] items-center justify-center">
-          <EmptyState
-            icon={<Key size={22} />}
-            title="还没有密钥"
-            description="生成一把 ed25519 密钥，或导入已有的 OpenSSH 私钥。"
-            action={
-              <Button variant="primary" onClick={openCreate}>
-                <Plus size={15} />
-                生成第一把密钥
-              </Button>
-            }
-          />
-        </Card>
+        <motion.div variants={staggerItem}>
+          <Card>
+            <EmptyState
+              icon={<Key />}
+              title="还没有密钥"
+              description="生成一把 ed25519 密钥，或导入已有的 OpenSSH 私钥；主机可以改用密钥认证，不再保存密码。"
+              action={
+                <Button variant="primary" onClick={() => setDialog({ open: true, mode: 'generate' })}>
+                  <Plus />
+                  生成第一把密钥
+                </Button>
+              }
+            />
+          </Card>
+        </motion.div>
       )}
 
-      <Dialog
-        open={createOpen}
-        onOpenChange={changeCreateOpen}
-        size="md"
-        title="新建密钥"
-        footer={
-          <>
-            <Button variant="ghost" type="button" onClick={() => changeCreateOpen(false)}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              type="submit"
-              form="create-key-form"
-              loading={createKey.isPending}
-            >
-              创建
-            </Button>
-          </>
-        }
-      >
-        <form id="create-key-form" onSubmit={handleSubmit(create)}>
-          <div className="space-y-4">
-            <Field label="名称" required error={errors.name?.message}>
-              {(id) => (
-                <Input
-                  id={id}
-                  autoFocus
-                  placeholder="例如 deploy-ed25519"
-                  invalid={Boolean(errors.name)}
-                  {...register('name', { required: '请输入名称' })}
-                />
-              )}
-            </Field>
-            <Field
-              label="模式"
-              required
-              error={errors.mode?.message}
-              hint={mode === 'generate' ? '服务端生成私钥并只回传公钥' : undefined}
-            >
-              {(id) => (
-                <Controller
-                  name="mode"
-                  control={control}
-                  rules={{ required: '请选择模式' }}
-                  render={({ field }) => (
-                    <Select
-                      id={id}
-                      value={field.value}
-                      onChange={field.onChange}
-                      invalid={Boolean(errors.mode)}
-                      options={[
-                        { value: 'generate', label: '生成 ed25519' },
-                        { value: 'import', label: '导入 OpenSSH 私钥' },
-                      ]}
-                    />
-                  )}
-                />
-              )}
-            </Field>
-          </div>
-          {/* 私钥框随模式展开而不是瞬间弹出：弹层高度跟着一起长，切换时不会突然跳一大截 */}
-          <AnimatePresence initial={false}>
-            {mode === 'import' && (
-              <motion.div
-                key="private-key"
-                className="overflow-hidden"
-                initial={reduceMotion ? false : { height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
-                transition={{ duration: reduceMotion ? 0 : 0.22, ease: 'easeOut' }}
-              >
-                {/* 负外边距补回 overflow-hidden 裁掉的焦点环空间，同时保持与上方字段左右对齐 */}
-                <div className="-m-0.5 p-0.5 pt-[18px]">
-                  <Field label="私钥" required error={errors.private_key?.message}>
-                    {(id) => (
-                      <Textarea
-                        id={id}
-                        rows={8}
-                        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                        invalid={Boolean(errors.private_key)}
-                        {...register('private_key', {
-                          required: mode === 'import' ? '请输入私钥' : false,
-                        })}
-                      />
-                    )}
-                  </Field>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </form>
-      </Dialog>
+      <KeyDialog
+        open={dialog.open}
+        mode={dialog.mode}
+        onModeChange={(mode) => setDialog((prev) => ({ ...prev, mode }))}
+        onOpenChange={(open) => setDialog((prev) => ({ ...prev, open }))}
+        onCreated={() => undefined}
+      />
 
       <SelectionBar count={selected.size} onClear={() => setSelected(new Set())}>
         <Button variant="danger" size="sm" onClick={() => setBatchDeleting(true)}>
@@ -315,11 +247,11 @@ export function KeysPage() {
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(open) => !open && setDeleting(null)}
-        title="删除密钥？"
+        title={`删除 ${deleting?.name ?? ''}？`}
         description={
-          deleting && usageOf(deleting.id) > 0
-            ? `${deleting.name} 正被 ${usageOf(deleting.id)} 台主机使用，删除后这些主机将无法连接。`
-            : `${deleting?.name ?? ''} 删除后无法恢复，私钥不会留有备份。`
+          deletingUsage > 0
+            ? `这把密钥正被 ${deletingUsage} 台主机使用，删除后这些主机将无法连接。私钥没有任何备份，此操作不可撤销。`
+            : '私钥没有任何备份，删除后无法恢复。'
         }
         confirmText="删除"
         danger
@@ -339,8 +271,12 @@ export function KeysPage() {
       <ConfirmDialog
         open={batchDeleting}
         onOpenChange={setBatchDeleting}
-        title={`批量删除 ${selected.size} 把密钥？`}
-        description="所选密钥删除后无法恢复，正使用它们的主机将无法连接。"
+        title={`删除所选的 ${selected.size} 把密钥？`}
+        description={
+          batchUsage > 0
+            ? `其中有密钥正被共 ${batchUsage} 台主机使用，删除后这些主机将无法连接。此操作不可撤销。`
+            : '所选密钥删除后无法恢复。'
+        }
         confirmText="删除"
         danger
         onConfirm={async () => {

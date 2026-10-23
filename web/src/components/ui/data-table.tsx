@@ -18,6 +18,15 @@ export type TableSelection<T, K extends string | number> = {
   isRowSelectable?: (row: T) => boolean
 }
 
+/**
+ * 单元格：分隔线挂在 td 顶部，悬停整行变井色并抹掉上下两条线；
+ * 首尾单元格做圆角 10，与外层卡片 16 − 6 同心。
+ */
+const CELL =
+  'h-[50px] border-t border-line px-3 align-middle whitespace-nowrap transition-colors duration-150 ' +
+  'group-first/row:border-t-transparent group-hover/row:border-t-transparent [tr:hover+tr>&]:border-t-transparent ' +
+  'group-hover/row:bg-hover group-focus-visible/row:bg-hover first:rounded-l-well last:rounded-r-well'
+
 export function DataTable<T, K extends string | number = string | number>({
   columns,
   rows,
@@ -75,7 +84,7 @@ export function DataTable<T, K extends string | number = string | number>({
           分隔线因此挂在单元格而不是 tr 上——两种模式渲染结果一致，不必分叉 */}
       <table
         className={cn(
-          'w-full border-separate border-spacing-0 text-[12.5px]',
+          'w-full border-separate border-spacing-0 text-[13px]',
           fixedLayout && 'table-fixed',
           showEmpty && 'hidden',
         )}
@@ -85,10 +94,7 @@ export function DataTable<T, K extends string | number = string | number>({
             {selection && (
               <th
                 scope="col"
-                className={cn(
-                  'w-10 border-b border-border py-[11px] pr-0 pl-4',
-                  stickyHeader && 'sticky top-0 z-10 bg-surface',
-                )}
+                className={cn('w-10 py-2 pr-0 pl-3', stickyHeader && 'sticky top-0 z-10 bg-surface')}
               >
                 <Checkbox
                   aria-label="全选"
@@ -103,7 +109,7 @@ export function DataTable<T, K extends string | number = string | number>({
                 key={c.key}
                 scope="col"
                 className={cn(
-                  'border-b border-border px-4 py-[11px] text-left text-[10.5px] font-semibold tracking-[0.1em] whitespace-nowrap text-faint uppercase',
+                  'px-3 pt-2 pb-[9px] text-left text-[12px] font-medium whitespace-nowrap text-ink-3',
                   stickyHeader && 'sticky top-0 z-10 bg-surface',
                   c.className,
                 )}
@@ -116,15 +122,15 @@ export function DataTable<T, K extends string | number = string | number>({
         <tbody>
           {loading &&
             Array.from({ length: 4 }, (_, i) => (
-              <tr key={`skeleton-${i}`} className="[&:last-child>td]:border-b-0">
+              <tr key={`skeleton-${i}`}>
                 {selection && (
-                  <td className="border-b border-surface-2 py-3 pr-0 pl-4">
+                  <td className={cn(CELL, 'pr-0 pl-3')}>
                     <Skeleton className="size-4" />
                   </td>
                 )}
                 {columns.map((c) => (
-                  <td key={c.key} className={cn('border-b border-surface-2 px-4 py-3', c.className)}>
-                    <Skeleton className="h-4 w-2/3" />
+                  <td key={c.key} className={cn(CELL, c.className)}>
+                    <Skeleton className="h-3.5 w-2/3" />
                   </td>
                 ))}
               </tr>
@@ -148,19 +154,14 @@ export function DataTable<T, K extends string | number = string | number>({
                 }
                 tabIndex={onRowClick ? 0 : undefined}
                 className={cn(
-                  'transition-colors [&:last-child>td]:border-b-0',
-                  onRowClick
-                    ? 'cursor-pointer hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none'
-                    : 'hover:bg-surface-2',
-                  selection?.selected.has(rowKey(row)) && 'bg-accent-soft/60',
+                  'group/row',
+                  onRowClick && 'cursor-pointer focus-visible:outline-none',
+                  selection?.selected.has(rowKey(row)) && '[&>td]:bg-well-2',
                 )}
               >
                 {selection && (
                   // 勾选不触发行点击（如文件页的进入目录/下载）
-                  <td
-                    className="border-b border-surface-2 py-3 pr-0 pl-4"
-                    onClick={(event) => event.stopPropagation()}
-                  >
+                  <td className={cn(CELL, 'pr-0 pl-3')} onClick={(event) => event.stopPropagation()}>
                     <Checkbox
                       aria-label="选择本行"
                       checked={selection.selected.has(rowKey(row))}
@@ -170,10 +171,7 @@ export function DataTable<T, K extends string | number = string | number>({
                   </td>
                 )}
                 {columns.map((c) => (
-                  <td
-                    key={c.key}
-                    className={cn('border-b border-surface-2 px-4 py-3 align-middle text-text', c.className)}
-                  >
+                  <td key={c.key} className={cn(CELL, 'text-ink', c.className)}>
                     {c.render ? c.render(row) : String((row as Record<string, unknown>)[c.key] ?? '')}
                   </td>
                 ))}

@@ -2,7 +2,7 @@ import * as PopoverPrimitive from '@radix-ui/react-popover'
 import { Check, FunnelSimple, MagnifyingGlass } from '@phosphor-icons/react'
 import { useState } from 'react'
 import { cn } from '@/lib/cn'
-import { HashBadge } from './badge'
+import { Tag } from './badge'
 
 export type ColumnFilterOption<T extends string | number> = { value: T; label: string }
 
@@ -71,9 +71,9 @@ export function ColumnFilter<T extends string | number>(
         aria-expanded={open}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          'inline-grid size-[18px] shrink-0 cursor-pointer place-items-center rounded-[6px] text-faint normal-case transition-colors',
-          'hover:bg-accent-soft hover:text-accent-ink',
-          (active || open) && 'bg-accent-soft text-accent-ink',
+          'inline-grid size-[18px] shrink-0 cursor-pointer place-items-center rounded-[6px] text-ink-3 normal-case transition-colors',
+          'hover:bg-hover-2 hover:text-ink',
+          (active || open) && 'bg-primary text-primary-fg hover:bg-primary hover:text-primary-fg',
           className,
         )}
       >
@@ -84,17 +84,17 @@ export function ColumnFilter<T extends string | number>(
           align="start"
           sideOffset={6}
           onClick={(e) => e.stopPropagation()}
-          className="z-50 flex max-h-72 w-52 flex-col overflow-hidden rounded-container border border-border bg-surface shadow-pop"
+          className="z-[70] flex max-h-72 w-52 flex-col overflow-hidden rounded-pop origin-[var(--radix-popover-content-transform-origin)] data-[state=open]:animate-pop-in bg-surface shadow-pop"
         >
           {/* 搜索框常显：选项随时可能增长，即时过滤的成本远低于「超过 N 个才出现」的交互跳变 */}
-          <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-            <MagnifyingGlass size={13} className="shrink-0 text-faint" />
+          <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+            <MagnifyingGlass size={13} className="shrink-0 text-ink-3" />
             <input
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜索选项…"
-              className="w-full bg-transparent text-[12.5px] text-text outline-none placeholder:text-faint"
+              className="w-full bg-transparent text-[12.5px] text-ink outline-none placeholder:text-ink-3"
             />
           </div>
           <div className="flex-1 overflow-y-auto p-1">
@@ -102,14 +102,14 @@ export function ColumnFilter<T extends string | number>(
               <button
                 type="button"
                 onClick={() => pickSingle(null)}
-                className="flex w-full cursor-pointer items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-[13px] text-muted hover:bg-surface-2"
+                className="flex w-full cursor-pointer items-center gap-2 rounded-pop-in px-2.5 py-1.5 text-left text-[13px] text-ink-2 hover:bg-hover-2"
               >
                 <span className="flex-1">{props.allLabel ?? '全部'}</span>
-                {props.value == null && <Check size={13} weight="bold" className="text-accent" />}
+                {props.value == null && <Check size={13} weight="bold" className="text-ink" />}
               </button>
             )}
             {visible.length === 0 && (
-              <p className="px-3 py-2 text-[12.5px] text-muted">没有匹配「{query.trim()}」的选项</p>
+              <p className="px-3 py-2 text-[12.5px] text-ink-2">没有匹配「{query.trim()}」的选项</p>
             )}
             {visible.map((o) => {
               const selected = props.multi ? props.value.includes(o.value) : props.value === o.value
@@ -120,30 +120,28 @@ export function ColumnFilter<T extends string | number>(
                   role={props.multi ? 'menuitemcheckbox' : 'menuitemradio'}
                   aria-checked={selected}
                   onClick={() => (props.multi ? toggleMulti(o.value) : pickSingle(o.value))}
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-[13px] text-text hover:bg-surface-2"
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-pop-in px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-hover-2"
                 >
                   <span className="flex-1 truncate">
                     {props.optionBadge ? (
                       // 与表格单元格里的徽章同款哈希取色：选项和列表里同一个值同一个颜色
-                      <HashBadge value={o.label} className="text-[10.5px]">
-                        {o.label}
-                      </HashBadge>
+                      <Tag>{o.label}</Tag>
                     ) : (
                       o.label
                     )}
                   </span>
-                  {selected && <Check size={13} weight="bold" className="shrink-0 text-accent" />}
+                  {selected && <Check size={13} weight="bold" className="shrink-0 text-ink" />}
                 </button>
               )
             })}
           </div>
           {props.multi && props.value.length > 0 && (
-            <div className="flex items-center justify-between border-t border-border px-3 py-1.5">
-              <span className="text-[12px] text-muted tabular-nums">已选 {props.value.length} 项</span>
+            <div className="flex items-center justify-between border-t border-line px-3 py-1.5">
+              <span className="text-[12px] text-ink-2 tabular-nums">已选 {props.value.length} 项</span>
               <button
                 type="button"
                 onClick={() => props.multi && props.onChange([])}
-                className="cursor-pointer text-[12px] text-muted transition-colors hover:text-danger"
+                className="cursor-pointer text-[12px] text-ink-2 transition-colors hover:text-bad"
               >
                 清空
               </button>

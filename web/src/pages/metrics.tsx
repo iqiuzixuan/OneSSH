@@ -1,361 +1,333 @@
-import { useMemo, useState } from 'react'
-import { ChartLine } from '@phosphor-icons/react'
-import { useNavigate } from 'react-router-dom'
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
-import { useHosts, useMetrics } from '@/api/queries'
+import { ChartLine, HardDrives, Pulse } from '@phosphor-icons/react'
+import { useQuery } from '@tanstack/react-query'
+import { motion } from 'motion/react'
+import { useEffect, useMemo } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { api } from '@/api/client'
+import { queryKeys, useHosts } from '@/api/queries'
+import type { Host, Metric } from '@/api/types'
+import { SeriesChart, type SeriesPoint } from '@/components/charts/series-chart'
+import { Dot } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Num } from '@/components/ui/number'
 import { PageHeader } from '@/components/ui/page-header'
 import { PageTransition } from '@/components/ui/page-transition'
+import { Segmented } from '@/components/ui/segmented'
 import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { memPct } from '@/lib/calls'
+import { cn } from '@/lib/cn'
+import { formatAgo, formatBytes } from '@/lib/format'
+import { staggerItem } from '@/lib/motion'
 
-/** 系列元信息单点定义：图例取色、Tooltip 的中文名/单位/小数位都从这里来，避免各处各写一份 */
-const SERIES = {
-  cpu_pct: { label: 'CPU', color: 'var(--chart-cpu)', unit: '%', digits: 1 },
-  mem_pct: { label: '内存', color: 'var(--chart-mem)', unit: '%', digits: 1 },
-  load1: { label: 'Load 1', color: 'var(--chart-load)', unit: '', digits: 2 },
-  disk_pct: { label: '磁盘', color: 'var(--chart-disk)', unit: '%', digits: 1 },
-} as const
+type Range = '1h' | '6h' | '24h' | '7d'
+const RANGES: { value: Range; label: string; hours: number }[] = [
+  { value: '1h', label: '1 小时', hours: 1 },
+  { value: '6h', label: '6 小时', hours: 6 },
+  { value: '24h', label: '24 小时', hours: 24 },
+  { value: '7d', label: '7 天', hours: 168 },
+]
+/** 时间窗再长，曲线也只画这么多个点：7 天的分钟级采样逐点画出来既慢又看不清 */
+const MAX_POINTS = 360
+/** 宽度不超过这么多台时用分段控件平铺主机名，再多就收进下拉 */
+const SEGMENT_LIMIT = 6
 
-type SeriesKey = keyof typeof SERIES
+type Key = 'cpu' | 'mem' | 'load'
+const valueOf = (m: Metric, key: Key): number | null =>
+  key === 'cpu' ? (m.cpu_pct ?? null) : key === 'mem' ? memPct(m) : (m.load1 ?? null)
 
-const AXIS_TICK = { fontSize: 11 } as const
-/** 左边距归零：Y 轴刻度靠 YAxis 的 width 让位，负边距会把「100%」这类刻度裁掉半个字 */
-const CHART_MARGIN = { top: 8, right: 4, bottom: 0, left: 0 } as const
-
-const TOOLTIP_TIME = new Intl.DateTimeFormat('zh-CN', {
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
-})
-
-const AXIS_TIME = new Intl.DateTimeFormat('zh-CN', {
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
-})
-
-/**
- * 时间轴用数值型 + scale=time：60 个采样点若按分类轴逐点打标签必然重叠，
- * 数值轴配合 minTickGap 才能让 recharts 自行抽稀到可读密度。
- * 两张图共用同一份配置，刻度位置才会上下对齐。
- */
-const TIME_AXIS: React.ComponentProps<typeof XAxis> = {
-  dataKey: 'ts',
-  type: 'number',
-  scale: 'time',
-  domain: ['dataMin', 'dataMax'],
-  tickFormatter: (value: number) => AXIS_TIME.format(value),
-  minTickGap: 56,
-  tickMargin: 8,
-  tickLine: false,
-  tick: { ...AXIS_TICK, fill: 'var(--muted)' },
-  stroke: 'var(--border)',
+/** 降采样：按时间桶取最大值——峰值比均值更值得被看见 */
+function downsample(series: Metric[], key: Key): SeriesPoint[] {
+  const points = series.map((m) => ({ ts: m.ts, value: valueOf(m, key) }))
+  if (points.length <= MAX_POINTS) return points
+  const size = Math.ceil(points.length / MAX_POINTS)
+  const out: SeriesPoint[] = []
+  for (let i = 0; i < points.length; i += size) {
+    const bucket = points.slice(i, i + size)
+    const values = bucket.map((p) => p.value).filter((v): v is number => v != null)
+    out.push({ ts: bucket[bucket.length - 1].ts, value: values.length ? Math.max(...values) : null })
+  }
+  return out
 }
 
-type ChartTooltipEntry = {
-  color?: string
-  dataKey?: string | number
-  value?: string | number
+function stats(points: SeriesPoint[]) {
+  const values = points.map((p) => p.value).filter((v): v is number => v != null)
+  if (!values.length) return null
+  return {
+    max: Math.max(...values),
+    min: Math.min(...values),
+    avg: values.reduce((a, b) => a + b, 0) / values.length,
+  }
 }
 
-type ChartTooltipProps = {
-  active?: boolean
-  label?: string | number
-  payload?: readonly ChartTooltipEntry[]
-}
+const CHARTS: { key: Key; label: string; unit: string; digits: number; max?: number; wide?: boolean }[] = [
+  { key: 'cpu', label: 'CPU 使用率', unit: '%', digits: 1, max: 100, wide: true },
+  { key: 'mem', label: '内存使用率', unit: '%', digits: 1, max: 100 },
+  { key: 'load', label: '负载 · 1 分钟', unit: '', digits: 2 },
+]
 
-function ChartTooltip({ active, payload, label }: ChartTooltipProps) {
-  if (!active || !payload?.length) return null
-
+function ChartCard({
+  label,
+  unit,
+  digits,
+  max,
+  wide,
+  points,
+  current,
+}: {
+  label: string
+  unit: string
+  digits: number
+  max?: number
+  wide?: boolean
+  points: SeriesPoint[]
+  current: number | null
+}) {
+  const s = stats(points)
+  const fmt = (v: number) => `${v.toFixed(digits)}${unit}`
   return (
-    <div className="min-w-[148px] rounded-container border border-border bg-surface px-3 py-2 shadow-pop">
-      <p className="mb-1.5 text-[11px] text-muted tabular-nums">
-        {TOOLTIP_TIME.format(Number(label))}
-      </p>
-      <div className="space-y-1">
-        {payload.map((item) => {
-          const meta = SERIES[String(item.dataKey) as SeriesKey]
-          const value = Number(item.value)
-          return (
-            <div key={String(item.dataKey)} className="flex items-center gap-2 text-xs">
-              <span
-                className="size-2 shrink-0 rounded-full"
-                style={{ background: item.color ?? 'var(--muted)' }}
-              />
-              <span className="text-muted">{meta?.label ?? item.dataKey}</span>
-              <span className="ml-auto tabular-nums text-text">
-                {Number.isFinite(value) ? value.toFixed(meta?.digits ?? 1) : '—'}
-                {meta?.unit}
-              </span>
+    <motion.div variants={staggerItem} className={cn(wide && 'lg:col-span-2')}>
+      <Card className="p-1.5">
+        <div className="flex items-end justify-between gap-4 px-2.5 pt-2.5 pb-2">
+          <div>
+            <div className="text-[12.5px] text-ink-2">{label}</div>
+            <div className="mt-1 text-[26px] leading-[1.1] font-medium tracking-[-0.03em]">
+              {current == null ? (
+                <span className="text-ink-3">—</span>
+              ) : (
+                <Num value={Number(current.toFixed(digits))} suffix={unit} format={{ minimumFractionDigits: digits, maximumFractionDigits: digits }} />
+              )}
             </div>
-          )
-        })}
-      </div>
-    </div>
+          </div>
+          {s && (
+            <div className="text-right font-mono text-[11.5px] leading-relaxed text-ink-3">
+              最高 {fmt(s.max)}
+              <br />
+              平均 {fmt(s.avg)} · 最低 {fmt(s.min)}
+            </div>
+          )}
+        </div>
+        <div className="mx-1.5 mb-1">
+          <SeriesChart
+            points={points}
+            height={wide ? 200 : 160}
+            max={max}
+            unit={unit}
+            format={(v) => v.toFixed(unit === '%' ? 0 : digits)}
+            ariaLabel={label}
+          />
+        </div>
+      </Card>
+    </motion.div>
   )
 }
 
-/** recharts 自带 Legend 难以 token 化（内联字号与颜色），自绘一行小色点更可控 */
-function Legend({ items }: { items: { color: string; label: string }[] }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      {items.map((item) => (
-        <span key={item.label} className="flex items-center gap-1.5 text-[12px] text-muted">
-          <span className="size-2 rounded-full" style={{ background: item.color }} />
-          {item.label}
-        </span>
-      ))}
-    </div>
-  )
-}
+/** df 会把 /dev、/proc 这类伪文件系统与容器的 bind mount 一并列出，它们的占用没有参考价值 */
+const PSEUDO_MOUNT = /^\/(dev|proc|sys|run)(\/|$)|^\/etc\//
 
-function ChartSkeleton({ height }: { height: number }) {
+function DiskCard({ latest }: { latest?: Metric }) {
+  const all = latest?.disks ?? []
+  const real = all.filter((d) => d.total_kb > 0 && !PSEUDO_MOUNT.test(d.mount))
+  const disks = real.length ? real : all
   return (
-    <Card className="flex flex-col">
-      <CardHeader>
-        <Skeleton className="h-4 w-40" />
-        <Skeleton className="h-3 w-24" />
-      </CardHeader>
-      <CardContent>
-        <Skeleton style={{ height }} />
-      </CardContent>
-    </Card>
+    <motion.div variants={staggerItem}>
+      <Card className="h-full p-1.5">
+        <div className="px-2.5 pt-2.5 pb-1 text-[12.5px] text-ink-2">磁盘</div>
+        {disks.length === 0 ? (
+          <p className="px-2.5 pb-3 text-[12.5px] text-ink-3">没有采到挂载点。</p>
+        ) : (
+          <div className="pb-1.5">
+            {disks.map((disk) => {
+              const pct = disk.total_kb ? (disk.used_kb / disk.total_kb) * 100 : 0
+              return (
+                <div key={disk.mount} className="grid grid-cols-[minmax(0,110px)_minmax(0,1fr)_auto] items-center gap-3.5 px-2.5 py-2.5 text-[12.5px]">
+                  <span className="truncate font-mono" title={disk.mount}>
+                    {disk.mount}
+                  </span>
+                  <span className="h-1.5 overflow-hidden rounded-full bg-well-2" aria-hidden>
+                    <motion.span
+                      className={cn('block h-full rounded-full', pct > 90 ? 'bg-bad' : pct > 80 ? 'bg-warn' : 'bg-ink-2')}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${pct}%` }}
+                      transition={{ type: 'spring', visualDuration: 0.6, bounce: 0 }}
+                    />
+                  </span>
+                  <span className="text-right font-mono text-[12px] text-ink-2">
+                    {pct.toFixed(0)}% · {formatBytes(disk.used_kb * 1024)} / {formatBytes(disk.total_kb * 1024)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Card>
+    </motion.div>
   )
 }
 
 export function MetricsPage() {
-  const [host, setHost] = useState<number>()
-  const hosts = useHosts()
-  const metrics = useMetrics(host, 24)
   const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
+  const { data: hosts = [], isLoading: hostsLoading } = useHosts()
+  const range = (RANGES.find((r) => r.value === params.get('range'))?.value ?? '1h') as Range
+  const hours = RANGES.find((r) => r.value === range)!.hours
 
-  const selected = hosts.data?.find((item) => item.id === host)
-  const diskMount = metrics.data?.[0]?.disks[0]?.mount
-
-  const chart = useMemo(
+  // 开了监控的在前、在线的在前：默认落在最可能有数据的那台
+  const ordered = useMemo(
     () =>
-      (metrics.data ?? []).map((x) => ({
-        ts: x.ts,
-        cpu_pct: x.cpu_pct,
-        load1: x.load1,
-        mem_pct: x.mem_total_kb ? (100 * (x.mem_used_kb || 0)) / x.mem_total_kb : undefined,
-        disk_pct: x.disks[0]?.total_kb
-          ? (100 * x.disks[0].used_kb) / x.disks[0].total_kb
-          : undefined,
-      })),
-    [metrics.data],
+      [...hosts].sort(
+        (a, b) =>
+          Number(b.monitor_enabled) - Number(a.monitor_enabled) ||
+          Number(b.health?.state === 'online') - Number(a.health?.state === 'online') ||
+          a.name.localeCompare(b.name),
+      ),
+    [hosts],
   )
+  const hostParam = Number(params.get('host'))
+  const host: Host | undefined = hosts.find((h) => h.id === hostParam) ?? ordered.find((h) => h.monitor_enabled)
+
+  // 没有指定主机时把默认选择写回 URL，刷新与分享都落在同一台
+  useEffect(() => {
+    if (!params.get('host') && host) {
+      const next = new URLSearchParams(params)
+      next.set('host', String(host.id))
+      setParams(next, { replace: true })
+    }
+  }, [host, params, setParams])
+
+  const set = (key: string, value: string) => {
+    const next = new URLSearchParams(params)
+    next.set(key, value)
+    setParams(next, { replace: true })
+  }
+
+  const metrics = useQuery({
+    queryKey: queryKeys.metrics(host?.id ?? 0, hours),
+    queryFn: () => api<Metric[]>(`/metrics/${host!.id}?hours=${hours}`),
+    enabled: host != null,
+    refetchInterval: 30_000,
+  })
+  const series = metrics.data ?? []
+  const latest = series[series.length - 1]
+  const monitored = ordered.filter((h) => h.monitor_enabled)
+
+  const picker =
+    monitored.length > 0 && monitored.length <= SEGMENT_LIMIT && (!host || host.monitor_enabled) ? (
+      <Segmented
+        value={String(host?.id ?? '')}
+        onChange={(v) => set('host', v)}
+        aria-label="主机"
+        options={monitored.map((h) => ({
+          value: String(h.id),
+          label: <span className="font-mono text-[12px]">{h.name}</span>,
+        }))}
+      />
+    ) : (
+      <Select
+        className="w-56"
+        value={host?.id}
+        onChange={(id) => set('host', String(id))}
+        aria-label="主机"
+        placeholder="选择主机"
+        options={ordered.map((h) => ({ value: h.id, label: h.name, description: h.monitor_enabled ? undefined : '未监控' }))}
+      />
+    )
 
   return (
     <PageTransition>
       <PageHeader
-        eyebrow="Metrics"
         title="指标"
-        subtitle="24 小时 CPU、内存、负载与磁盘趋势"
+        description="网关按周期经 SSH 采集 Linux 的 CPU、内存、负载与磁盘，保留 7 天。远端不需要安装任何代理。"
         actions={
-          <Select
-            className="w-52"
-            value={host}
-            onChange={setHost}
-            options={(hosts.data ?? []).map((h) => ({ value: h.id, label: h.name }))}
-            placeholder="选择主机"
+          <Segmented
+            value={range}
+            onChange={(v) => set('range', v)}
+            aria-label="时间窗"
+            options={RANGES.map((r) => ({ value: r.value, label: r.label }))}
           />
         }
       />
 
-      {!host ? (
-        // text-balance：中文按字断行，不均分的话说明文字常掉出一个两字尾行
-        <EmptyState
-          className="[&_p]:text-balance"
-          icon={<ChartLine size={22} />}
-          title="选择一台主机"
-          // 副标题已经说了画什么，这里换成用户真正会踩的前提：只有开了监控的主机才有采样
-          description="只有开启了「资源监控」的主机会持续采样，其余主机选中后为空。"
-        />
-      ) : metrics.isLoading ? (
-        <div className="space-y-4">
-          <ChartSkeleton height={280} />
-          <ChartSkeleton height={260} />
-        </div>
-      ) : chart.length === 0 ? (
-        // 「没数据」有两种成因，指向的动作完全不同，分开说才有用
-        selected && !selected.monitor_enabled ? (
+      <motion.div variants={staggerItem} className="mb-3 flex flex-wrap items-center gap-2.5">
+        {hostsLoading ? <Skeleton className="h-8 w-80" /> : hosts.length > 0 && picker}
+        {latest && (
+          <span className="ml-auto inline-flex items-center gap-2 text-[12px] text-ink-3">
+            <Dot tone="ok" live />
+            最近采样 {formatAgo(latest.ts)}
+          </span>
+        )}
+      </motion.div>
+
+      {!hostsLoading && hosts.length === 0 ? (
+        <Card>
           <EmptyState
-            className="[&_p]:text-balance"
-            icon={<ChartLine size={22} />}
-            title="该主机未开启资源监控"
-            description="在主机页打开「资源监控」后，网关会按周期采集 CPU、内存、负载与磁盘。"
+            icon={<HardDrives />}
+            title="还没有主机"
+            description="添加主机并开启资源监控后，这里会出现 CPU、内存、负载与磁盘的趋势。"
             action={
-              <Button variant="outline" onClick={() => navigate('/hosts')}>
-                去主机页开启
+              <Button variant="primary" onClick={() => navigate('/hosts?new=1')}>
+                添加主机
               </Button>
             }
           />
-        ) : (
+        </Card>
+      ) : !host ? (
+        <Card>
           <EmptyState
-            className="[&_p]:text-balance"
-            icon={<ChartLine size={22} />}
-            title="暂无采样数据"
-            description="监控已开启，正在等待首次采集；若持续为空，请确认主机当前可连通。"
+            icon={<ChartLine />}
+            title="没有主机开启资源监控"
+            description="只有开启了「资源监控」的主机会持续采样。在主机详情里打开它即可。"
+            action={<Button onClick={() => navigate('/hosts')}>去主机列表</Button>}
           />
-        )
+        </Card>
+      ) : !host.monitor_enabled ? (
+        <Card>
+          <EmptyState
+            icon={<ChartLine />}
+            title={`${host.name} 未开启资源监控`}
+            description="打开后网关会按周期采集 CPU、内存、负载与磁盘；历史从开启那一刻开始累积。"
+            action={
+              <Button variant="primary" onClick={() => navigate(`/hosts/${host.id}`)}>
+                去主机详情开启
+              </Button>
+            }
+          />
+        </Card>
+      ) : metrics.isPending ? (
+        <div className="grid gap-3 lg:grid-cols-2">
+          <Skeleton className="h-[290px] rounded-card lg:col-span-2" />
+          <Skeleton className="h-[250px] rounded-card" />
+          <Skeleton className="h-[250px] rounded-card" />
+        </div>
+      ) : series.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={<Pulse />}
+            title="暂无采样数据"
+            description={
+              host.health?.state === 'offline'
+                ? `${host.name} 当前无法连接：${host.health.error ?? '最近一次建连失败'}`
+                : '监控已开启，正在等待首次采集。这个时间窗内还没有采样点。'
+            }
+          />
+        </Card>
       ) : (
-        <div className="space-y-4">
-          <Card>
-            <CardHeader className="flex-wrap">
-              <CardTitle>CPU 与内存占用</CardTitle>
-              <Legend
-                items={[
-                  { color: SERIES.cpu_pct.color, label: 'CPU %' },
-                  { color: SERIES.mem_pct.color, label: '内存 %' },
-                ]}
-              />
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={280}>
-                {/* 右边距留出与下图右轴等宽的空白，两张图的绘图区因此完全对齐，时间刻度上下成列 */}
-                <AreaChart data={chart} margin={{ ...CHART_MARGIN, right: 44 }}>
-                  <defs>
-                    <linearGradient id="grad-cpu" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={SERIES.cpu_pct.color} stopOpacity={0.22} />
-                      <stop offset="100%" stopColor={SERIES.cpu_pct.color} stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="grad-mem" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={SERIES.mem_pct.color} stopOpacity={0.18} />
-                      <stop offset="100%" stopColor={SERIES.mem_pct.color} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  {/* 只留横向网格：竖线对读数没帮助，却会把图面切碎 */}
-                  <CartesianGrid vertical={false} stroke="var(--border)" />
-                  <XAxis {...TIME_AXIS} />
-                  <YAxis
-                    domain={[0, 100]}
-                    ticks={[0, 25, 50, 75, 100]}
-                    width={40}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(v: number) => `${v}%`}
-                    tick={{ ...AXIS_TICK, fill: 'var(--muted)' }}
-                  />
-                  <Tooltip
-                    content={<ChartTooltip />}
-                    cursor={{ stroke: 'var(--border-strong)', strokeWidth: 1 }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="cpu_pct"
-                    stroke={SERIES.cpu_pct.color}
-                    strokeWidth={1.75}
-                    fill="url(#grad-cpu)"
-                    dot={false}
-                    activeDot={{ r: 3, strokeWidth: 0 }}
-                    // recharts 自带的 1.5s 描线动画会在每次容器尺寸变化时重放（窗口缩放、响应式断点切换都会触发），
-                    // 页面本身已有 PageTransition 的淡入，这里保持静默即可
-                    isAnimationActive={false}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="mem_pct"
-                    stroke={SERIES.mem_pct.color}
-                    strokeWidth={1.75}
-                    fill="url(#grad-mem)"
-                    dot={false}
-                    activeDot={{ r: 3, strokeWidth: 0 }}
-                    isAnimationActive={false}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex-wrap">
-              <CardTitle>
-                系统负载与磁盘占用
-                {/* 只画首个挂载点，标题里点名是哪个盘，否则「磁盘」是句无从核对的话。
-                    带上「挂载点」前缀：根分区的 mount 就是一个 "/"，裸挂在标题后像打错的斜杠 */}
-                {diskMount && (
-                  <span className="ml-2 text-[11px] font-normal text-muted">
-                    挂载点 <span className="font-mono">{diskMount}</span>
-                  </span>
-                )}
-              </CardTitle>
-              <Legend
-                items={[
-                  { color: SERIES.load1.color, label: 'Load 1（左轴）' },
-                  { color: SERIES.disk_pct.color, label: '磁盘 %（右轴）' },
-                ]}
-              />
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={260}>
-                {/* 负载（约 0–3）与磁盘占用（约 60–80%）量级差一个数量级，
-                    共用一根 Y 轴会把负载压成一条贴底的直线，故拆双轴并给轴染上系列色 */}
-                <LineChart data={chart} margin={{ ...CHART_MARGIN, right: 0 }}>
-                  <CartesianGrid vertical={false} stroke="var(--border)" />
-                  <XAxis {...TIME_AXIS} />
-                  <YAxis
-                    yAxisId="load"
-                    width={40}
-                    axisLine={false}
-                    tickLine={false}
-                    // 图例已标注左/右轴归属，刻度再染成系列色纯属重复，而 amber 在浅色底上不足 3:1
-                    tick={{ ...AXIS_TICK, fill: 'var(--muted)' }}
-                  />
-                  <YAxis
-                    yAxisId="disk"
-                    orientation="right"
-                    domain={[0, 100]}
-                    ticks={[0, 25, 50, 75, 100]}
-                    width={44}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(v: number) => `${v}%`}
-                    tick={{ ...AXIS_TICK, fill: 'var(--muted)' }}
-                  />
-                  <Tooltip
-                    content={<ChartTooltip />}
-                    cursor={{ stroke: 'var(--border-strong)', strokeWidth: 1 }}
-                  />
-                  <Line
-                    yAxisId="load"
-                    type="monotone"
-                    dataKey="load1"
-                    stroke={SERIES.load1.color}
-                    dot={false}
-                    strokeWidth={1.75}
-                    activeDot={{ r: 3, strokeWidth: 0 }}
-                    isAnimationActive={false}
-                  />
-                  <Line
-                    yAxisId="disk"
-                    type="monotone"
-                    dataKey="disk_pct"
-                    stroke={SERIES.disk_pct.color}
-                    dot={false}
-                    strokeWidth={1.75}
-                    activeDot={{ r: 3, strokeWidth: 0 }}
-                    isAnimationActive={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
+        <div className={cn('grid gap-3 transition-opacity duration-150 lg:grid-cols-2', metrics.isFetching && metrics.isPlaceholderData && 'opacity-60')}>
+          {CHARTS.map((chart) => (
+            <ChartCard
+              key={`${host.id}-${chart.key}`}
+              label={chart.label}
+              unit={chart.unit}
+              digits={chart.digits}
+              max={chart.max}
+              wide={chart.wide}
+              points={downsample(series, chart.key)}
+              current={latest ? valueOf(latest, chart.key) : null}
+            />
+          ))}
+          <DiskCard latest={latest} />
         </div>
       )}
     </PageTransition>

@@ -1,199 +1,190 @@
-import { DotsThree, HardDrives, MagnifyingGlass, Plus } from '@phosphor-icons/react'
-import { Controller, useForm } from 'react-hook-form'
-import { useEffect, useId, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { toast } from 'sonner'
 import {
-  useDeleteHost,
-  useDeleteHosts,
-  useHosts,
-  useKeys,
-  useResetFingerprint,
-  useSaveHost,
-  useTestHost,
-} from '@/api/queries'
-import type { Host, HostPayload } from '@/api/types'
+  CaretRight,
+  Copy,
+  DotsThree,
+  FingerprintSimple,
+  FolderOpen,
+  Funnel,
+  HardDrives,
+  Key,
+  LockKey,
+  MagnifyingGlass,
+  PencilSimple,
+  Plus,
+  PlugsConnected,
+  Terminal,
+  Trash,
+} from '@phosphor-icons/react'
+import { useQueryClient } from '@tanstack/react-query'
+import { motion } from 'motion/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { toast } from 'sonner'
+import { queryKeys, useDeleteHost, useDeleteHosts, useHosts, useKeys, useResetFingerprint } from '@/api/queries'
+import type { Host, Metric } from '@/api/types'
 import { HostConnection } from '@/components/host-connection'
+import { HostFormDialog } from '@/components/hosts/host-form-dialog'
+import { healthLine, HostSheet } from '@/components/hosts/host-sheet'
+import {
+  latestOf,
+  STATE_TONE,
+  stateOf,
+  useHostMetrics,
+  useHostTest,
+  useToggleMonitor,
+} from '@/components/hosts/host-utils'
 import { ConfirmDialog } from '@/components/ui/alert-dialog'
-import { Dot, HashBadge } from '@/components/ui/badge'
+import { Chip, Dot, Tag } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Code } from '@/components/ui/code'
+import { ColumnFilter } from '@/components/ui/column-filter'
 import { DataTable, type Column } from '@/components/ui/data-table'
-import { Dialog } from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Field } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { ColumnFilter } from '@/components/ui/column-filter'
-import { MultiSelect } from '@/components/ui/multi-select'
+import { Input, Kbd } from '@/components/ui/input'
 import { PageHeader } from '@/components/ui/page-header'
 import { PageTransition } from '@/components/ui/page-transition'
-import { Select } from '@/components/ui/select'
-import { SelectionBar } from '@/components/ui/selection-bar'
 import { Segmented } from '@/components/ui/segmented'
+import { SelectionBar } from '@/components/ui/selection-bar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { Tooltip } from '@/components/ui/tooltip'
+import { memPct, type HostState } from '@/lib/calls'
 import { cn } from '@/lib/cn'
+import { staggerItem } from '@/lib/motion'
 
+type StatusFilter = 'all' | 'online' | 'offline' | 'idle'
 type ConfirmState = { kind: 'reset' | 'delete'; host: Host } | { kind: 'batch-delete' } | null
 
-const emptyForm: HostPayload = {
-  name: '',
-  username: '',
-  addr: '',
-  port: 22,
-  auth_type: 'password',
-  password: undefined,
-  key_id: undefined,
-  jump_host: undefined,
-  monitor_enabled: true,
-  tags: [],
-}
+const matchStatus = (state: HostState, filter: StatusFilter) =>
+  filter === 'all' ||
+  (filter === 'online' && state === 'online') ||
+  (filter === 'offline' && state === 'offline') ||
+  (filter === 'idle' && (state === 'unknown' || state === 'sampling'))
 
-/** 与后端 hostmanager.normalizeTags 对齐：最多 16 个标签，每个至多 32 个 Unicode 字符 */
-const MAX_TAGS = 16
-const MAX_TAG_LENGTH = 32
-
-/**
- * 后端 hostmanager.normalizeTags 走 Go 的 strings.ToLower：逐 rune 的 simple 小写映射。
- * JS 的 toLowerCase 对整串按完整 Unicode 规则来，还会看上下文——`ΟΣ` 的词尾 Σ 落成 ς，
- * `ΟΣ` 与 `οσ` 于是拿到两个不同的键，前端判重就和后端不是同一套规则了。
- * 所以逐 code point 单独取小写切断上下文（Σ 恒为 σ），再对「单个 code point 被展开成多个」
- * 的情况只保留首个（`İ` → `i` + U+0307，Go 只映射到 `i`），结果正好等于 simple 映射。
- */
-const simpleLowerKey = (tag: string) => {
-  let key = ''
-  for (const ch of tag) {
-    const lower = ch.toLowerCase()
-    if (lower.length === ch.length) {
-      key += lower
-      continue
-    }
-    // 按 code point 解构，取首个映射；代理对不会被劈成半个字符
-    const [head] = lower
-    key += head
-  }
-  return key
-}
-
-/**
- * 按上面那把小写键去重、保留首次出现的拼写，与后端 normalizeTags 判定同一批标签重复。
- * 候选列表与已选值共用一份规则，`Web` 与 `web`、`ΟΣ` 与 `οσ` 都不会同时存在。
- */
-const dedupeTags = (tags: string[]) => {
-  const seen = new Set<string>()
-  return tags.filter((tag) => {
-    const key = simpleLowerKey(tag)
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
-/**
- * TOFU 未完成是全新主机的正常初始状态，不是故障。
- * 用一个警告色小圆点点到为止，避免整列黄色 badge 把视线从主机名上抢走。
- */
-const FingerprintCell = ({ host }: { host: Host }) =>
-  host.hostkey_fp ? (
-    <Code className="max-w-full" copyable title={host.hostkey_fp}>
-      {host.hostkey_fp}
-    </Code>
-  ) : (
-    <span className="inline-flex items-center gap-2 text-[12px] text-muted">
-      <Dot className="bg-warning" />
-      待首次信任
+/** 迷你条：44px 轨道 + 等宽百分比；超过 85% 转琥珀——这是列表里唯一会因数值变色的地方 */
+function Meter({ value }: { value: number }) {
+  const hot = value > 85
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="h-1 w-11 overflow-hidden rounded-full bg-well-2" aria-hidden>
+        <span
+          className={cn('block h-full rounded-full transition-[width] duration-700 ease-[var(--ease-out)]', hot ? 'bg-warn' : 'bg-ink-2')}
+          style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+        />
+      </span>
+      <span className={cn('min-w-9 font-mono text-[12px] tabular-nums', hot ? 'text-warn' : 'text-ink-2')}>{Math.round(value)}%</span>
     </span>
   )
+}
 
-/** 监控开关是状态而非属性，与指纹共用「圆点 + 文字」这一套状态语汇 */
-const MonitorCell = ({ host }: { host: Host }) => (
-  <span className="inline-flex items-center gap-2 text-[12px] text-muted">
-    <Dot className={host.monitor_enabled ? 'bg-accent' : 'bg-border-strong'} />
-    {host.monitor_enabled ? '启用' : '关闭'}
-  </span>
-)
+/** 没有指标时说清原因，而不是一排破折号 */
+function MetricCell({ host, state, value }: { host: Host; state: HostState; value: number | null | undefined }) {
+  if (value != null) return <Meter value={value} />
+  if (state === 'offline') return <span className="text-[12px] text-ink-3">无法连接</span>
+  if (!host.monitor_enabled) return <span className="text-[12px] text-ink-3">未监控</span>
+  return <span className="text-[12px] text-ink-3">—</span>
+}
 
-/** 标签是分组属性而非状态：平铺徽章、允许换行，没有标签时用破折号留白；颜色按值哈希，同值同色 */
-const TagsCell = ({ host }: { host: Host }) =>
-  host.tags.length > 0 ? (
-    <span className="flex flex-wrap items-center gap-1">
-      {host.tags.map((tag) => (
-        <HashBadge key={tag} value={tag}>
-          {tag}
-        </HashBadge>
+function RouteCell({ host, byId }: { host: Host; byId: Map<number, Host> }) {
+  const jump = host.jump_host_id ? byId.get(host.jump_host_id) : undefined
+  if (!jump) return <span className="text-[12.5px] text-ink-3">直连</span>
+  return (
+    <Tooltip content={`经跳板 ${jump.name} 转发`}>
+      <span className="inline-flex items-center gap-1 font-mono text-[11.5px] text-ink-2">
+        <span className="rounded-[5px] bg-well-2 px-1.5 py-0.5">{jump.name}</span>
+        <CaretRight size={11} className="text-ink-3" />
+      </span>
+    </Tooltip>
+  )
+}
+
+function TagsCell({ tags }: { tags: string[] }) {
+  if (!tags.length) return <span className="text-ink-3">—</span>
+  const shown = tags.slice(0, 3)
+  return (
+    <span className="flex items-center gap-1" title={tags.join('、')}>
+      {shown.map((tag) => (
+        <Tag key={tag}>{tag}</Tag>
       ))}
+      {tags.length > shown.length && <Tag>+{tags.length - shown.length}</Tag>}
     </span>
-  ) : (
-    <span className="text-muted">—</span>
   )
-
+}
 
 export function HostsPage() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const { id: routeId } = useParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const hosts = useHosts()
   const keys = useKeys()
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [editing, setEditing] = useState<Host>()
-  const [testingId, setTestingId] = useState<number>()
-  const [confirm, setConfirm] = useState<ConfirmState>(null)
-  const [selected, setSelected] = useState<Set<number>>(new Set())
-  const monitorId = useId()
-  const save = useSaveHost(editing?.id)
+  const list = useMemo(() => hosts.data ?? [], [hosts.data])
+  const byId = useMemo(() => new Map(list.map((host) => [host.id, host])), [list])
+  const metrics = useHostMetrics(list)
+  const toggleMonitor = useToggleMonitor(list)
+  const { test, testAll, testing } = useHostTest()
   const deleteHost = useDeleteHost()
   const deleteHosts = useDeleteHosts()
   const resetFingerprint = useResetFingerprint()
-  const testHost = useTestHost()
-  const {
-    register,
-    control,
-    watch,
-    reset,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<HostPayload>({ defaultValues: emptyForm, shouldUnregister: true })
-  const authType = watch('auth_type')
 
-  // 列表一次拉全量且无服务端分页，过滤全部在前端本地做，改动即生效、不发请求
+  const [status, setStatus] = useState<StatusFilter>('all')
+  const [tags, setTags] = useState<string[]>([])
   const [query, setQuery] = useState('')
-  const [filterTags, setFilterTags] = useState<string[]>([])
-  // 认证是列头单选漏斗：null 即「全部」；监控是高频维度，走工具行的分段控件
   const [filterAuth, setFilterAuth] = useState<'password' | 'key' | null>(null)
-  const [filterMonitor, setFilterMonitor] = useState<'all' | 'on' | 'off'>('all')
+  const [filterMonitor, setFilterMonitor] = useState<'on' | 'off' | null>(null)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<Host>()
+  const [confirm, setConfirm] = useState<ConfirmState>(null)
+  const [resetName, setResetName] = useState('')
+  const [testingAll, setTestingAll] = useState(false)
+  const search = useRef<HTMLInputElement>(null)
 
-  /** 全部主机已有标签的去重集合，同时喂给过滤条与表单的可选项 */
-  const allTags = useMemo(
-    () => [...new Set((hosts.data ?? []).flatMap((host) => host.tags))].sort(),
-    [hosts.data],
-  )
+  const stateById = useMemo(() => new Map(list.map((host) => [host.id, stateOf(host, metrics.get(host.id))])), [list, metrics])
+  const allTags = useMemo(() => [...new Set(list.flatMap((host) => host.tags))].sort(), [list])
+  const counts = useMemo(() => {
+    const c = { all: list.length, online: 0, offline: 0, idle: 0 }
+    for (const host of list) {
+      const state = stateById.get(host.id)!
+      if (state === 'online') c.online++
+      else if (state === 'offline') c.offline++
+      else c.idle++
+    }
+    return c
+  }, [list, stateById])
 
+  // 列表一次拉全量且无服务端分页，筛选全部在前端本地做，改动即生效、不发请求
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return (hosts.data ?? []).filter((host) => {
-      if (
-        q &&
-        ![host.name, host.addr, host.username].some((text) => text.toLowerCase().includes(q))
-      )
-        return false
+    return list.filter((host) => {
+      if (!matchStatus(stateById.get(host.id)!, status)) return false
       // 标签取「任一交集即命中」：多选是扩面而不是收窄
-      if (filterTags.length > 0 && !host.tags.some((tag) => filterTags.includes(tag))) return false
+      if (tags.length && !host.tags.some((tag) => tags.includes(tag))) return false
       if (filterAuth && host.auth_type !== filterAuth) return false
-      if (filterMonitor !== 'all' && host.monitor_enabled !== (filterMonitor === 'on')) return false
+      if (filterMonitor && host.monitor_enabled !== (filterMonitor === 'on')) return false
+      if (q && ![host.name, host.addr, host.username, ...host.tags].some((text) => text.toLowerCase().includes(q))) return false
       return true
     })
-  }, [hosts.data, query, filterTags, filterAuth, filterMonitor])
+  }, [list, stateById, status, tags, filterAuth, filterMonitor, query])
 
-  /**
-   * 过滤条把主机移出视野后，它就不该继续留在选中态里：批量删除只作用于当前看得见的选择，
-   * 否则改一次筛选就可能删掉一台根本不在列表里的主机。
-   */
+  const narrowedToNothing = list.length > 0 && filtered.length === 0
+  const clearFilters = () => {
+    setStatus('all')
+    setTags([])
+    setQuery('')
+    setFilterAuth(null)
+    setFilterMonitor(null)
+  }
+
+  // 筛选把主机移出视野后，它就不该继续留在选中态：批量删除只作用于看得见的选择
   useEffect(() => {
     setSelected((prev) => {
       if (prev.size === 0) return prev
@@ -203,99 +194,151 @@ export function HostsPage() {
     })
   }, [filtered])
 
-  /** 列表本身非空、只是被过滤条件清空时，换一套空态文案引导清除条件 */
-  const narrowedToNothing = (hosts.data?.length ?? 0) > 0 && filtered.length === 0
+  // ⌘K「添加主机」与概览空态通过 ?new=1 深链进来：消费一次参数后立刻清掉，刷新不会重复弹窗
+  useEffect(() => {
+    if (searchParams.get('new') !== '1') return
+    setEditing(undefined)
+    setFormOpen(true)
+    setSearchParams({}, { replace: true })
+  }, [searchParams, setSearchParams])
+
+  // 「/」聚焦搜索：输入框、弹层里不抢键
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey) return
+      const target = event.target as HTMLElement
+      if (target.closest('input, textarea, [contenteditable], [role="dialog"]')) return
+      event.preventDefault()
+      search.current?.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const detail = routeId ? byId.get(Number(routeId)) : undefined
+  // 直链到一台不存在（或刚被删）的主机：列表加载完、且没有正在进行的重拉时仍找不到，才退回列表
+  useEffect(() => {
+    if (routeId && hosts.isSuccess && !hosts.isFetching && !byId.has(Number(routeId))) navigate('/hosts', { replace: true })
+  }, [routeId, hosts.isSuccess, hosts.isFetching, byId, navigate])
+
+  // 删除成功后立刻从列表缓存摘掉，不等重拉回来——行不会在确认之后还停留一会儿
+  const dropFromCache = (ids: number[]) =>
+    queryClient.setQueryData<Host[]>(queryKeys.hosts, (prev) => prev?.filter((host) => !ids.includes(host.id)))
 
   const openCreate = () => {
     setEditing(undefined)
-    reset(emptyForm)
-    setDialogOpen(true)
+    setFormOpen(true)
   }
-
-  // 顶栏「新建主机」与总览空态通过 ?new=1 深链进来：消费一次参数后立刻清掉，刷新不重复弹窗
-  const [searchParams, setSearchParams] = useSearchParams()
-  useEffect(() => {
-    if (searchParams.get('new') !== '1') return
-    openCreate()
-    setSearchParams({}, { replace: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   const openEdit = (host: Host) => {
     setEditing(host)
-    // 私密凭据不能由列表响应恢复；显式清空可避免误把旧值再次提交。
-    // 跳板在视图里是 id、在载荷里是 name，回显时换算一次。
-    reset({
-      ...host,
-      password: undefined,
-      jump_host: hosts.data?.find((item) => item.id === host.jump_host_id)?.name,
-    })
-    setDialogOpen(true)
+    setFormOpen(true)
+  }
+  const askReset = (host: Host) => {
+    setResetName('')
+    setConfirm({ kind: 'reset', host })
+  }
+  const copyAddress = async (host: Host) => {
+    try {
+      await navigator.clipboard.writeText(`ssh -p ${host.port} ${host.username}@${host.addr}`)
+      toast.success('连接命令已复制')
+    } catch {
+      toast.error('复制失败，请手动选择文本')
+    }
   }
 
-  const submit = handleSubmit(async (values) => {
-    // 空字符串是「直连」选项的值，归一成 undefined 才符合后端「省略即清除」的整体替换语义。
-    const base = { ...values, jump_host: values.jump_host || undefined }
-    const payload: HostPayload =
-      values.auth_type === 'key'
-        ? { ...base, password: undefined }
-        : { ...base, key_id: undefined, password: values.password || undefined }
-    await save.mutateAsync(payload)
-    setDialogOpen(false)
-  })
-
-  const test = async (host: Host) => {
-    setTestingId(host.id)
-    const request = testHost.mutateAsync(host.id)
-    toast.promise(request, {
-      loading: `正在连接 ${host.name}`,
-      success: (result) => result.output || '连接成功',
-      error: (error) => (error as Error).message,
-    })
+  const runTestAll = async () => {
+    setTestingAll(true)
     try {
-      await request
-    } catch {
-      // 错误已由 toast.promise 呈现，这里只负责收敛 loading 状态。
+      await testAll(filtered.length ? filtered : list)
     } finally {
-      setTestingId(undefined)
+      setTestingAll(false)
     }
   }
 
   const hostMenu = (host: Host) => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={`${host.name} 操作`}>
-          <DotsThree size={18} weight="bold" />
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`${host.name} 的更多操作`}
+          className="text-ink-3"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <DotsThree weight="bold" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={() => openEdit(host)}>编辑</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setConfirm({ kind: 'reset', host })}>
+      <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+        <DropdownMenuItem onSelect={() => void test(host)}>
+          <PlugsConnected />
+          测试连接
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate(`/terminal?host=${encodeURIComponent(host.name)}`)}>
+          <Terminal />
+          打开终端
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate(`/files?host=${host.id}`)}>
+          <FolderOpen />
+          浏览文件
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => void copyAddress(host)} hint={host.addr}>
+          <Copy />
+          复制连接命令
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => openEdit(host)}>
+          <PencilSimple />
+          编辑
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem danger disabled={!host.hostkey_fp} onSelect={() => askReset(host)}>
+          <FingerprintSimple />
           重置指纹
         </DropdownMenuItem>
         <DropdownMenuItem danger onSelect={() => setConfirm({ kind: 'delete', host })}>
+          <Trash />
           删除
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
 
-  // 显式列宽：属性列定宽、余量全部给主机名列，避免最后一列前出现上百像素空档。
+  const latest = (host: Host): Metric | undefined => latestOf(metrics.get(host.id))
+  const keyName = (id?: number) => keys.data?.find((key) => key.id === id)?.name
+
   const columns: Column<Host>[] = [
     {
       key: 'name',
       title: '主机',
-      className: 'min-w-[220px]',
-      render: (host) => (
-        <div className="min-w-0">
-          <div className="truncate leading-5 font-medium">{host.name}</div>
-          <HostConnection host={host} />
-        </div>
-      ),
+      className: 'min-w-[200px]',
+      render: (host) => {
+        const state = stateById.get(host.id)!
+        return (
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Dot tone={STATE_TONE[state]} idle={state === 'unknown' || state === 'sampling'} />
+            <div className="min-w-0">
+              <div className="truncate text-[13px] font-medium">{host.name}</div>
+              <div className={cn('truncate text-[11.5px]', state === 'offline' ? 'text-bad' : 'text-ink-3')}>
+                {healthLine(host, state)}
+              </div>
+            </div>
+          </div>
+        )
+      },
     },
     {
-      key: 'auth_type',
-      // 列头内联筛选：漏斗弹层即选即生效，激活后列名旁直接显示当前值
+      key: 'addr',
+      title: '地址',
+      className: 'w-[200px] max-w-[200px]',
+      render: (host) => <HostConnection host={host} />,
+    },
+    {
+      key: 'route',
+      title: '路由',
+      className: 'w-[120px]',
+      render: (host) => <RouteCell host={host} byId={byId} />,
+    },
+    {
+      key: 'auth',
       title: (
         <span className="inline-flex items-center gap-1.5">
           认证
@@ -307,534 +350,307 @@ export function HostsPage() {
               { value: 'password', label: '密码' },
               { value: 'key', label: 'SSH 密钥' },
             ]}
-            allLabel="全部认证"
+            allLabel="全部认证方式"
           />
-          {filterAuth && (
-            <span className="font-medium tracking-normal text-accent-ink normal-case">
-              {filterAuth === 'key' ? 'SSH 密钥' : '密码'}
-            </span>
-          )}
         </span>
       ),
-      className: 'w-[112px]',
+      className: 'w-[132px] max-w-[132px]',
       render: (host) => (
-        <span className="text-[13px] text-muted">
-          {host.auth_type === 'key' ? 'SSH 密钥' : '密码'}
+        <span className="inline-flex max-w-full items-center gap-1.5 text-[12.5px] text-ink-2">
+          {host.auth_type === 'key' ? <Key size={14} className="shrink-0" /> : <LockKey size={14} className="shrink-0" />}
+          <span className={cn('truncate', host.auth_type === 'key' && 'font-mono text-[12px]')}>
+            {host.auth_type === 'key' ? (keyName(host.key_id) ?? '密钥') : '密码'}
+          </span>
         </span>
       ),
     },
     {
       key: 'tags',
+      title: '标签',
+      className: 'hidden w-[150px] min-[1400px]:table-cell',
+      render: (host) => <TagsCell tags={host.tags} />,
+    },
+    {
+      key: 'cpu',
+      title: 'CPU',
+      className: 'w-[104px]',
+      render: (host) => <MetricCell host={host} state={stateById.get(host.id)!} value={latest(host)?.cpu_pct} />,
+    },
+    {
+      key: 'mem',
+      title: '内存',
+      className: 'hidden w-[104px] min-[1400px]:table-cell',
+      render: (host) => <MetricCell host={host} state={stateById.get(host.id)!} value={memPct(latest(host))} />,
+    },
+    {
+      key: 'monitor',
       title: (
         <span className="inline-flex items-center gap-1.5">
-          标签
+          监控
           <ColumnFilter
-            multi
-            optionBadge
-            aria-label="按标签筛选"
-            value={filterTags}
-            onChange={setFilterTags}
-            options={allTags.map((tag) => ({ value: tag, label: tag }))}
+            aria-label="按监控状态筛选"
+            value={filterMonitor}
+            onChange={setFilterMonitor}
+            options={[
+              { value: 'on', label: '已开启' },
+              { value: 'off', label: '已关闭' },
+            ]}
+            allLabel="全部"
           />
-          {filterTags.length > 0 && (
-            <span className="font-medium tracking-normal text-accent-ink tabular-nums">
-              {filterTags.length}
-            </span>
-          )}
         </span>
       ),
-      className: 'w-[168px]',
-      render: (host) => <TagsCell host={host} />,
-    },
-    {
-      key: 'hostkey_fp',
-      title: '指纹',
-      className: 'w-[320px]',
-      render: (host) => <FingerprintCell host={host} />,
-    },
-    {
-      key: 'monitor_enabled',
-      title: '监控',
-      className: 'w-[104px]',
-      render: (host) => <MonitorCell host={host} />,
+      className: 'w-[84px]',
+      render: (host) => (
+        <span onClick={(event) => event.stopPropagation()} className="inline-flex">
+          <Tooltip content={host.monitor_enabled ? '资源监控已开启' : '资源监控已关闭'}>
+            <span className="inline-flex">
+              <Switch
+                checked={host.monitor_enabled}
+                aria-label={`${host.name} 资源监控`}
+                onCheckedChange={(enabled) => toggleMonitor.mutate({ host, enabled })}
+              />
+            </span>
+          </Tooltip>
+        </span>
+      ),
     },
     {
       key: 'actions',
-      title: '操作',
-      className: 'w-[136px] text-right',
-      render: (host) => (
-        <div className="flex items-center justify-end gap-1">
-          <Button
-            size="sm"
-            variant="outline"
-            // 定宽：spinner 出现时按钮不再变宽，避免整行操作区在测试过程中抖动
-            className="min-w-[76px]"
-            loading={testingId === host.id}
-            onClick={() => void test(host)}
-          >
-            测试
-          </Button>
-          {hostMenu(host)}
-        </div>
-      ),
+      title: <span className="sr-only">操作</span>,
+      className: 'w-[44px] text-right',
+      render: hostMenu,
     },
   ]
 
   const emptyState = (
     <EmptyState
-      icon={<HardDrives size={22} />}
-      title="还没有 SSH 主机"
-      description="添加主机后即可使用终端、文件与指标。"
+      icon={<HardDrives />}
+      title="还没有主机"
+      description="添加第一台主机后，Agent 就能经网关执行命令、读写文件、跑后台任务；凭据不会离开网关。"
       action={
         <Button variant="primary" onClick={openCreate}>
-          <Plus size={15} />
+          <Plus />
           添加主机
         </Button>
       }
     />
   )
-
   const noMatchState = (
     <EmptyState
-      icon={<MagnifyingGlass size={22} />}
-      title="没有匹配过滤条件的主机"
-      description="换个关键词，或放宽标签、认证与监控筛选。"
+      icon={<Funnel />}
+      title="没有匹配的主机"
+      description="换个关键词，或清除状态、标签与列头筛选。"
       action={
-        <Button
-          variant="outline"
-          onClick={() => {
-            setQuery('')
-            setFilterTags([])
-            setFilterAuth(null)
-            setFilterMonitor('all')
-          }}
-        >
+        <Button size="sm" onClick={clearFilters}>
           清除筛选
         </Button>
       }
     />
   )
 
-  // 一份过滤条同时驱动桌面表格与移动端卡片。监控是最高频维度，平铺成分段控件；
-  // 桌面端标签/认证内联在列头漏斗里，窄屏是卡片列表没有列头，在这补两个入口。
-  const filterControls = (
-    <>
-      <Segmented
-        value={filterMonitor}
-        onChange={setFilterMonitor}
-        aria-label="按监控状态筛选"
-        options={[
-          { value: 'all', label: '全部' },
-          { value: 'on', label: '启用监控' },
-          { value: 'off', label: '未监控' },
-        ]}
-      />
-      <span className="flex items-center gap-1.5 text-[12px] text-muted md:hidden">
-        标签
-        <ColumnFilter
-          multi
-          optionBadge
-          aria-label="按标签筛选"
-          value={filterTags}
-          onChange={setFilterTags}
-          options={allTags.map((tag) => ({ value: tag, label: tag }))}
-        />
-        <span className="ml-1.5">认证</span>
-        <ColumnFilter
-          aria-label="按认证方式筛选"
-          value={filterAuth}
-          onChange={setFilterAuth}
-          options={[
-            { value: 'password', label: '密码' },
-            { value: 'key', label: 'SSH 密钥' },
-          ]}
-          allLabel="全部认证"
-        />
-      </span>
-      <div className="w-full sm:ml-auto sm:w-60">
-        <Input
-          pill
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索名称、地址或用户名"
-          aria-label="搜索名称、地址或用户名"
-          spellCheck={false}
-          prefix={<MagnifyingGlass size={14} />}
-        />
-      </div>
-    </>
-  )
-
   return (
     <PageTransition>
       <PageHeader
-        eyebrow="Hosts"
         title="主机"
-        subtitle="SSH 目标、认证方式与 TOFU 指纹"
+        description="OneSSH 代 Agent 持有这些主机的凭据。私钥与密码经 AES-256-GCM 加密存放，只在建立连接的那一刻解密。"
         actions={
-          <Button variant="primary" onClick={openCreate}>
-            <Plus size={15} />
-            添加主机
-          </Button>
-        }
-      />
-
-      <Card className="mb-4 flex flex-wrap items-center gap-2 p-2.5 md:hidden">
-        {filterControls}
-      </Card>
-
-      <Card className="hidden md:block">
-        {/* 检索栏即表格的标题栏：同一张卡、一条分隔线，不再是悬浮在表格上方的独立卡片 */}
-        <div className="flex items-center gap-2 border-b border-border p-2.5">
-          {filterControls}
-        </div>
-        <DataTable
-          columns={columns}
-          rows={filtered}
-          rowKey={(host) => host.id}
-          loading={hosts.isLoading}
-          empty={narrowedToNothing ? noMatchState : emptyState}
-          selection={{ selected, onChange: setSelected }}
-        />
-      </Card>
-
-      <div className="space-y-3 md:hidden">
-        {hosts.isLoading ? (
-          Array.from({ length: 3 }, (_, index) => (
-            <Card key={index} className="space-y-3 p-4">
-              <Skeleton className="h-5 w-2/5" />
-              <Skeleton className="h-4 w-3/5" />
-              <Skeleton className="h-8 w-full" />
-            </Card>
-          ))
-        ) : filtered.length ? (
-          filtered.map((host) => (
-            <Card
-              key={host.id}
-              className={cn('min-w-0 p-4', selected.has(host.id) && 'border-accent')}
-            >
-              <div className="flex min-w-0 items-start justify-between gap-2">
-                <div className="flex min-w-0 items-start gap-2.5">
-                  <Checkbox
-                    className="mt-1"
-                    checked={selected.has(host.id)}
-                    onCheckedChange={() =>
-                      setSelected((prev) => {
-                        const next = new Set(prev)
-                        if (next.has(host.id)) next.delete(host.id)
-                        else next.add(host.id)
-                        return next
-                      })
-                    }
-                    aria-label={`选择主机 ${host.name}`}
-                  />
-                  <div className="min-w-0 pt-0.5">
-                    <div className="truncate leading-5 font-medium text-text">{host.name}</div>
-                    <HostConnection host={host} />
-                  </div>
-                </div>
-                {hostMenu(host)}
-              </div>
-              {/* 窄屏没有表头，用定值标签列把属性对齐成一张迷你规格表 */}
-              <dl className="mt-3 grid grid-cols-[52px_minmax(0,1fr)] items-center gap-y-2 text-[12px]">
-                <dt className="text-muted">认证</dt>
-                <dd className="text-text">{host.auth_type === 'key' ? 'SSH 密钥' : '密码'}</dd>
-                <dt className="text-muted">标签</dt>
-                <dd className="min-w-0">
-                  <TagsCell host={host} />
-                </dd>
-                <dt className="text-muted">跳板</dt>
-                <dd className="text-text">
-                  {hosts.data?.find((item) => item.id === host.jump_host_id)?.name ?? '直连'}
-                </dd>
-                <dt className="text-muted">指纹</dt>
-                <dd className="min-w-0">
-                  <FingerprintCell host={host} />
-                </dd>
-                <dt className="text-muted">监控</dt>
-                <dd>
-                  <MonitorCell host={host} />
-                </dd>
-              </dl>
-              <Button
-                className="mt-4 w-full"
-                variant="outline"
-                loading={testingId === host.id}
-                onClick={() => void test(host)}
-              >
-                测试连接
-              </Button>
-            </Card>
-          ))
-        ) : (
-          <Card className="p-4">{narrowedToNothing ? noMatchState : emptyState}</Card>
-        )}
-      </div>
-
-      <Dialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        size="md"
-        title={editing ? '编辑主机' : '添加主机'}
-        footer={
           <>
-            <Button type="button" variant="ghost" onClick={() => setDialogOpen(false)}>
-              取消
+            <Button loading={testingAll} disabled={list.length === 0} onClick={() => void runTestAll()}>
+              {!testingAll && <PlugsConnected />}
+              {testingAll ? '测试中' : filtered.length && filtered.length < list.length ? `测试 ${filtered.length} 台` : '全部测试'}
             </Button>
-            <Button type="submit" form="host-form" variant="primary" loading={save.isPending}>
-              保存
+            <Button variant="primary" onClick={openCreate}>
+              <Plus />
+              添加主机
             </Button>
           </>
         }
-      >
-        {/* 6 列栅格：端口只占 2 列，凭据与认证方式并排——切换认证方式时不再挤动下方行 */}
-        <form id="host-form" className="grid gap-4 sm:grid-cols-6" onSubmit={submit}>
-          <Field label="名称" required error={errors.name?.message} className="sm:col-span-3">
-            {(id) => (
-              <Input
-                id={id}
-                autoFocus
-                invalid={Boolean(errors.name)}
-                {...register('name', { required: '请输入名称' })}
-              />
-            )}
-          </Field>
-          <Field label="用户名" required error={errors.username?.message} className="sm:col-span-3">
-            {(id) => (
-              <Input
-                id={id}
-                invalid={Boolean(errors.username)}
-                {...register('username', { required: '请输入用户名' })}
-              />
-            )}
-          </Field>
-          <Field label="地址" required error={errors.addr?.message} className="sm:col-span-4">
-            {(id) => (
-              <Input
-                id={id}
-                invalid={Boolean(errors.addr)}
-                placeholder="主机名或 IP 地址"
-                {...register('addr', { required: '请输入地址' })}
-              />
-            )}
-          </Field>
-          <Field label="端口" required error={errors.port?.message} className="sm:col-span-2">
-            {(id) => (
-              <Input
-                id={id}
-                type="number"
-                min={1}
-                max={65535}
-                // 端口不适合用步进箭头微调，隐藏原生 spinner 免得悬停时冒出与体系无关的控件
-                className="tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                invalid={Boolean(errors.port)}
-                {...register('port', {
-                  required: '请输入端口',
-                  valueAsNumber: true,
-                  min: { value: 1, message: '端口不能小于 1' },
-                  max: { value: 65535, message: '端口不能大于 65535' },
-                })}
-              />
-            )}
-          </Field>
-          <Field
-            label="认证方式"
-            required
-            error={errors.auth_type?.message}
-            className="sm:col-span-3"
-          >
-            {(id) => (
-              <Controller
-                name="auth_type"
-                control={control}
-                rules={{ required: '请选择认证方式' }}
-                render={({ field }) => (
-                  <Select
-                    id={id}
-                    value={field.value}
-                    onChange={field.onChange}
-                    invalid={Boolean(errors.auth_type)}
-                    options={[
-                      { value: 'password', label: '密码' },
-                      { value: 'key', label: 'SSH 密钥' },
-                    ]}
-                  />
-                )}
-              />
-            )}
-          </Field>
+      />
 
-          {authType === 'key' ? (
-            <Field
-              label="密钥"
-              required
-              error={errors.key_id?.message}
-              hint={keys.data?.length === 0 ? '密钥页尚未创建任何密钥' : undefined}
-              className="sm:col-span-3"
-            >
-              {(id) => (
-                <Controller
-                  name="key_id"
-                  control={control}
-                  rules={{ required: '请选择密钥' }}
-                  render={({ field }) => (
-                    <Select
-                      id={id}
-                      value={field.value}
-                      onChange={field.onChange}
-                      options={(keys.data ?? []).map((key) => ({ value: key.id, label: key.name }))}
-                      placeholder="选择密钥"
-                      invalid={Boolean(errors.key_id)}
-                    />
-                  )}
-                />
-              )}
-            </Field>
-          ) : (
-            <Field
-              label={editing ? '新密码' : '密码'}
-              required={!editing}
-              error={errors.password?.message}
-              hint={editing ? '留空则不修改' : undefined}
-              className="sm:col-span-3"
-            >
-              {(id) => (
-                <Input
-                  id={id}
-                  type="password"
-                  autoComplete="new-password"
-                  invalid={Boolean(errors.password)}
-                  {...register('password', { required: editing ? false : '请输入密码' })}
-                />
-              )}
-            </Field>
-          )}
+      <motion.div variants={staggerItem} className="mb-3 flex flex-wrap items-center gap-2.5">
+        <Segmented
+          value={status}
+          onChange={setStatus}
+          aria-label="按连接状态筛选"
+          options={[
+            { value: 'all', label: '全部', count: counts.all },
+            { value: 'online', label: '在线', count: counts.online },
+            { value: 'offline', label: '离线', count: counts.offline },
+            ...(counts.idle ? [{ value: 'idle' as const, label: '未连接', count: counts.idle }] : []),
+          ]}
+        />
+        {allTags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="按标签筛选">
+            {allTags.map((tag) => (
+              <Chip
+                key={tag}
+                mono
+                active={tags.includes(tag)}
+                onClick={() => setTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]))}
+              >
+                {tag}
+              </Chip>
+            ))}
+          </div>
+        )}
+        <div className="flex-1" />
+        <Input
+          ref={search}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索名称、地址、标签"
+          aria-label="搜索名称、地址、标签"
+          spellCheck={false}
+          prefix={<MagnifyingGlass />}
+          suffix={query ? undefined : <Kbd>/</Kbd>}
+          wrapperClassName="w-full sm:w-[248px]"
+          onKeyDown={(event) => event.key === 'Escape' && (setQuery(''), event.currentTarget.blur())}
+        />
+      </motion.div>
 
-          <Field label="跳板主机" hint="选中后先经该主机建立隧道再连目标" className="sm:col-span-6">
-            {(id) => (
-              <Controller
-                name="jump_host"
-                control={control}
-                render={({ field }) => (
-                  <Select
-                    id={id}
-                    // 选项取主机 id 而非主机名：后端只校验名称非空、不限字符集，任何字符串哨兵
-                    // 都可能与真实主机名撞车；id 恒为正整数，0 可以安全表示「直连」。
-                    // 载荷仍按名称提交，两侧在这里换算。
-                    value={hosts.data?.find((item) => item.name === field.value)?.id ?? 0}
-                    onChange={(value) =>
-                      field.onChange(hosts.data?.find((item) => item.id === value)?.name)
-                    }
-                    placeholder="直连（不使用跳板）"
-                    options={[
-                      { value: 0, label: '直连（不使用跳板）' },
-                      ...(hosts.data ?? [])
-                        .filter((item) => item.name !== editing?.name)
-                        .map((item) => ({ value: item.id, label: item.name })),
-                    ]}
-                  />
-                )}
-              />
-            )}
-          </Field>
-
-          <Field
-            label="标签"
-            hint={`用于按用途或环境分组，可输入新标签回车创建；最多 ${MAX_TAGS} 个、每个 ${MAX_TAG_LENGTH} 字符`}
-            className="sm:col-span-6"
-          >
-            {(id) => (
-              <Controller
-                name="tags"
-                control={control}
-                render={({ field }) => {
-                  // 已选值先归一，勾选/回车/创建三条路径就都从同一份干净数组出发
-                  const current = dedupeTags(field.value ?? [])
-                  return (
-                    <MultiSelect
-                      id={id}
-                      value={current}
-                      // 所有选择入口都收敛到这里：勾选与回车同样要按小写键去重，不只是创建路径
-                      onChange={(next) => field.onChange(dedupeTags(next))}
-                      placeholder="选择或创建标签"
-                      searchPlaceholder="搜索或输入新标签…"
-                      // 候选 = 已有标签 ∪ 当前值：刚创建、还没保存到任何主机的标签也要能回显 label；
-                      // 同一份去重让下拉里不会并列出现 `Web` 与 `web`
-                      options={dedupeTags([...current, ...allTags]).map((tag) => ({
-                        value: tag,
-                        label: tag,
-                      }))}
-                      maxSelected={MAX_TAGS}
-                      onCreateOption={(label) => {
-                        const tag = label.trim()
-                        if (!tag) return
-                        // 限制与后端一致，拦在输入这一刻，而不是等提交才回一句报错
-                        if ([...tag].length > MAX_TAG_LENGTH) {
-                          toast.error(`标签「${tag}」超过 ${MAX_TAG_LENGTH} 字符`)
-                          return
-                        }
-                        if (current.length >= MAX_TAGS) {
-                          toast.error(`标签最多 ${MAX_TAGS} 个`)
-                          return
-                        }
-                        field.onChange(dedupeTags([...current, tag]))
-                      }}
-                    />
-                  )
-                }}
-              />
-            )}
-          </Field>
-
-          {/* 开关不是会报错的字段，改用一块 surface-2 行：说明与控件同一行，也给表单收了个尾 */}
-          <Controller
-            name="monitor_enabled"
-            control={control}
-            render={({ field }) => (
-              <div className="flex items-center justify-between gap-4 rounded-control bg-surface-2 px-3 py-2.5 sm:col-span-6">
-                <div className="space-y-0.5">
-                  <Label htmlFor={monitorId}>资源监控</Label>
-                  <p className="text-[12px] text-muted">定期采集 CPU、内存、负载与磁盘</p>
-                </div>
-                <Switch id={monitorId} checked={field.value} onCheckedChange={field.onChange} />
-              </div>
-            )}
+      <motion.div variants={staggerItem}>
+        <Card className="hidden p-1.5 md:block">
+          <DataTable
+            columns={columns}
+            rows={filtered}
+            rowKey={(host) => host.id}
+            loading={hosts.isLoading}
+            empty={narrowedToNothing ? noMatchState : emptyState}
+            onRowClick={(host) => navigate(`/hosts/${host.id}`)}
+            selection={{ selected, onChange: setSelected }}
           />
-        </form>
-      </Dialog>
+        </Card>
+
+        {/* 窄屏：表格换成卡片列表，同样可选择、可进入详情 */}
+        <div className="space-y-2.5 md:hidden">
+          {hosts.isLoading ? (
+            Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-[104px] rounded-card" />)
+          ) : filtered.length ? (
+            filtered.map((host) => {
+              const state = stateById.get(host.id)!
+              const cpu = latest(host)?.cpu_pct
+              return (
+                <Card
+                  key={host.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => navigate(`/hosts/${host.id}`)}
+                  className={cn('cursor-pointer p-3.5', selected.has(host.id) && 'shadow-raise')}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <span onClick={(event) => event.stopPropagation()} className="pt-0.5">
+                      <Checkbox
+                        checked={selected.has(host.id)}
+                        aria-label={`选择主机 ${host.name}`}
+                        onCheckedChange={() =>
+                          setSelected((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(host.id)) next.delete(host.id)
+                            else next.add(host.id)
+                            return next
+                          })
+                        }
+                      />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <Dot tone={STATE_TONE[state]} idle={state === 'unknown' || state === 'sampling'} />
+                        <b className="truncate text-[13px] font-semibold">{host.name}</b>
+                      </div>
+                      <HostConnection host={host} className="mt-1" />
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        <RouteCell host={host} byId={byId} />
+                        <TagsCell tags={host.tags} />
+                        {cpu != null && <Meter value={cpu} />}
+                      </div>
+                    </div>
+                    {hostMenu(host)}
+                  </div>
+                </Card>
+              )
+            })
+          ) : (
+            <Card>{narrowedToNothing ? noMatchState : emptyState}</Card>
+          )}
+        </div>
+      </motion.div>
+
+      <HostSheet
+        host={detail}
+        hosts={list}
+        latestByHost={metrics}
+        testing={testing}
+        onClose={() => navigate('/hosts')}
+        onTest={(host) => void test(host)}
+        onEdit={openEdit}
+        onReset={askReset}
+        onDelete={(host) => setConfirm({ kind: 'delete', host })}
+        onToggleMonitor={(host, enabled) => toggleMonitor.mutate({ host, enabled })}
+      />
+
+      <HostFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        editing={editing}
+        hosts={list}
+        onSaved={(host) => {
+          if (editing) return
+          // 新建成功直接打开详情：下一步最常做的就是「测试连接」。先把新主机写进列表缓存，
+          // 详情面板不必等重拉回来才能打开
+          queryClient.setQueryData<Host[]>(queryKeys.hosts, (prev) =>
+            prev && !prev.some((item) => item.id === host.id) ? [...prev, host] : prev,
+          )
+          navigate(`/hosts/${host.id}`)
+        }}
+      />
 
       <SelectionBar count={selected.size} onClear={() => setSelected(new Set())}>
+        <Button size="sm" onClick={() => void testAll(list.filter((host) => selected.has(host.id)))}>
+          <PlugsConnected />
+          测试
+        </Button>
         <Button variant="danger" size="sm" onClick={() => setConfirm({ kind: 'batch-delete' })}>
+          <Trash />
           删除
         </Button>
       </SelectionBar>
 
       <ConfirmDialog
         open={confirm !== null}
-        onOpenChange={(open) => {
-          if (!open) setConfirm(null)
-        }}
+        onOpenChange={(open) => !open && setConfirm(null)}
+        icon={confirm?.kind === 'reset' ? <FingerprintSimple weight="bold" /> : <Trash weight="bold" />}
         title={
           confirm?.kind === 'reset'
-            ? '重置主机指纹？'
+            ? `重置 ${confirm.host.name} 的主机指纹？`
             : confirm?.kind === 'batch-delete'
-              ? `批量删除 ${selected.size} 台主机？`
-              : '删除主机？'
+              ? `删除所选的 ${selected.size} 台主机？`
+              : `删除 ${confirm?.host.name ?? ''}？`
         }
         description={
-          confirm?.kind === 'reset'
-            ? `${confirm.host.name} 下次连接将重新执行 TOFU 首次信任。`
-            : confirm?.kind === 'batch-delete'
-              ? '所选主机及其令牌授权会一并失效，此操作不可撤销。'
-              : `${confirm?.host.name ?? ''} 及其令牌授权会一并失效，此操作不可撤销。`
+          confirm?.kind === 'reset' ? (
+            <>
+              下次连接时，网关会把对方出示的新指纹当作可信记录下来（TOFU）。只有在你确认这台主机
+              <b className="font-medium text-ink">刚刚重装过</b>时才这样做——否则这可能是一次中间人攻击。
+            </>
+          ) : confirm?.kind === 'batch-delete' ? (
+            '所选主机及其在各令牌里的授权会一并失效，此操作不可撤销。'
+          ) : (
+            '这台主机及其在各令牌里的授权会一并失效，此操作不可撤销。'
+          )
         }
-        confirmText={confirm?.kind === 'reset' ? '重置' : '删除'}
-        danger={confirm?.kind !== 'reset'}
+        confirmText={confirm?.kind === 'reset' ? '重置指纹' : '删除'}
+        confirmDisabled={confirm?.kind === 'reset' && resetName.trim() !== confirm.host.name}
+        danger
         onConfirm={async () => {
           if (!confirm) return
-          if (confirm.kind === 'reset') return resetFingerprint.mutateAsync(confirm.host.id)
+          if (confirm.kind === 'reset') {
+            await resetFingerprint.mutateAsync(confirm.host.id)
+            return
+          }
           if (confirm.kind === 'delete') {
             await deleteHost.mutateAsync(confirm.host.id)
+            dropFromCache([confirm.host.id])
+            if (detail?.id === confirm.host.id) navigate('/hosts')
             // 删成功才摘掉选中项：失败时保留，批量条上还能看到它并重试
             setSelected((prev) => {
               if (!prev.has(confirm.host.id)) return prev
@@ -844,11 +660,29 @@ export function HostsPage() {
             })
             return
           }
-          // 失败的留在选中态：列表刷新后用户能直接看到哪些没删掉，可立即重试
-          const { failedIds } = await deleteHosts.mutateAsync([...selected])
+          // 失败的留在选中态：列表刷新后能直接看到哪些没删掉，可立即重试
+          const ids = [...selected]
+          const { failedIds } = await deleteHosts.mutateAsync(ids)
+          dropFromCache(ids.filter((id) => !failedIds.includes(id)))
           setSelected(new Set(failedIds))
         }}
-      />
+      >
+        {confirm?.kind === 'reset' && (
+          <div className="space-y-1.5">
+            <p className="text-[12.5px] text-ink-2">
+              输入主机名 <code className="font-mono text-[12px] text-ink">{confirm.host.name}</code> 以确认
+            </p>
+            <Input
+              value={resetName}
+              onChange={(event) => setResetName(event.target.value)}
+              placeholder={confirm.host.name}
+              autoFocus
+              spellCheck={false}
+              className="font-mono text-[12.5px]"
+            />
+          </div>
+        )}
+      </ConfirmDialog>
     </PageTransition>
   )
 }

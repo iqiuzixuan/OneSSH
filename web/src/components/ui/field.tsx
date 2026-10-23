@@ -17,7 +17,7 @@ export function Field({
   label: string
   error?: string
   required?: boolean
-  hint?: string
+  hint?: React.ReactNode
   className?: string
   /** 接收字段 id，绑定到具体控件上以保证 label 可点 */
   children: (id: string) => React.ReactNode
@@ -27,13 +27,13 @@ export function Field({
     <div className={cn('space-y-1.5', className)}>
       <Label htmlFor={id}>
         {label}
-        {required && <span className="ml-0.5 text-danger">*</span>}
+        {required && <span className="ml-0.5 text-bad">*</span>}
       </Label>
       {children(id)}
       {error ? (
-        <p className="text-[12px] text-danger">{error}</p>
+        <p className="text-[12px] text-bad">{error}</p>
       ) : hint ? (
-        <p className="text-[12px] text-muted">{hint}</p>
+        <p className="text-[12px] leading-5 text-ink-3">{hint}</p>
       ) : null}
     </div>
   )
