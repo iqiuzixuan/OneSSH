@@ -44,6 +44,14 @@ type API struct {
 	Monitor *monitor.Manager
 	Memory  *memoryx.Engine
 	Events  *events.Bus
+	// Info 由 main 在启动时填好，控制台侧栏展示版本与运行时长。
+	Info GatewayInfo
+}
+
+type GatewayInfo struct {
+	Version   string `json:"version"`
+	StartedAt int64  `json:"started_at"`
+	Listen    string `json:"listen"`
 }
 
 func NewAPI(st *store.Store, box *cryptox.Box, pool *sshpool.Pool, hosts *hostmanager.Manager, exec *execx.Runner, files *files.Manager, jobs *jobs.Manager, mon *monitor.Manager, memory *memoryx.Engine, bus *events.Bus) *API {
@@ -81,6 +89,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("HEAD /sftp/{hostID}/download", a.sftpDownload)
 	mux.HandleFunc("GET /sftp/{hostID}/download", a.sftpDownload)
 	mux.HandleFunc("POST /sftp/{hostID}/upload", a.sftpUpload)
+	mux.HandleFunc("GET /overview", a.overview)
+	mux.HandleFunc("GET /info", a.info)
 	mux.HandleFunc("GET /events", a.sse)
 	mux.HandleFunc("GET /ws/terminal", a.terminal)
 	return mux
@@ -113,6 +123,12 @@ func hostErrorStatus(err error) int {
 
 type hostInput = hostmanager.Input
 
+// hostView 在主机配置之外附带连接池里的连通状态，列表页据此区分在线 / 离线 / 未知。
+type hostView struct {
+	store.HostView
+	Health sshpool.Health `json:"health"`
+}
+
 func (a *API) hosts(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		list, err := a.Store.ListHosts(r.Context())
@@ -120,9 +136,13 @@ func (a *API) hosts(w http.ResponseWriter, r *http.Request) {
 			apiError(w, 500, err)
 			return
 		}
-		out := make([]store.HostView, 0, len(list))
+		out := make([]hostView, 0, len(list))
 		for _, h := range list {
-			out = append(out, h.View())
+			v := hostView{HostView: h.View(), Health: sshpool.Health{State: "unknown"}}
+			if a.Pool != nil {
+				v.Health = a.Pool.Health(h.Name)
+			}
+			out = append(out, v)
 		}
 		jsonOut(w, 200, out)
 		return
@@ -284,6 +304,27 @@ type tokenView struct {
 	store.Token
 	HostIDs    []int64 `json:"host_ids,omitempty"`
 	PlainToken string  `json:"token,omitempty"`
+	// 库里是秒，这里统一成毫秒，与其它接口的时间戳单位一致。
+	LastUsedAt *int64  `json:"last_used_at,omitempty"`
+	ExpiresAt  *int64  `json:"expires_at,omitempty"`
+	ClientID   *string `json:"client_id,omitempty"`
+}
+
+func newTokenView(t store.Token, hostIDs []int64) tokenView {
+	v := tokenView{Token: t, HostIDs: hostIDs}
+	if t.LastUsedAt.Valid {
+		ms := t.LastUsedAt.Int64 * 1000
+		v.LastUsedAt = &ms
+	}
+	if t.ExpiresAt.Valid {
+		ms := t.ExpiresAt.Int64 * 1000
+		v.ExpiresAt = &ms
+	}
+	if t.ClientID.Valid {
+		id := t.ClientID.String
+		v.ClientID = &id
+	}
+	return v
 }
 
 func (a *API) toolGroups(w http.ResponseWriter, r *http.Request) {
@@ -318,7 +359,7 @@ func (a *API) tokens(w http.ResponseWriter, r *http.Request) {
 		out := make([]tokenView, 0, len(list))
 		for _, t := range list {
 			ids, _ := a.Store.TokenHostIDs(r.Context(), t.ID)
-			out = append(out, tokenView{Token: t, HostIDs: ids})
+			out = append(out, newTokenView(t, ids))
 		}
 		jsonOut(w, 200, out)
 		return
@@ -347,7 +388,9 @@ func (a *API) tokens(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 409, err)
 		return
 	}
-	jsonOut(w, 201, tokenView{Token: t, HostIDs: in.HostIDs, PlainToken: plain})
+	view := newTokenView(t, in.HostIDs)
+	view.PlainToken = plain
+	jsonOut(w, 201, view)
 }
 func (a *API) token(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
@@ -416,8 +459,14 @@ func (a *API) jobsList(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 500, err)
 		return
 	}
+	// refresh=0：只读库里的状态，不逐个 SSH 到远端核对（侧栏计数这类高频轮询用）
+	refresh := r.URL.Query().Get("refresh") != "0"
 	out := make([]jobs.Status, 0, len(list))
 	for _, j := range list {
+		if !refresh {
+			out = append(out, jobs.Snapshot(j))
+			continue
+		}
 		st, e := a.Jobs.Refresh(r.Context(), j)
 		if e == nil {
 			out = append(out, st)
@@ -487,7 +536,16 @@ func (a *API) audit(w http.ResponseWriter, r *http.Request) {
 		}
 		ok = &value
 	}
-	list, err := a.Store.ListAudit(r.Context(), tids, hosts, tools, ok, before, limit)
+	var denied *bool
+	if q.Get("denied") != "" {
+		value, parseErr := strconv.ParseBool(q.Get("denied"))
+		if parseErr != nil {
+			apiError(w, http.StatusBadRequest, parseErr)
+			return
+		}
+		denied = &value
+	}
+	list, err := a.Store.QueryAudit(r.Context(), store.AuditQuery{TokenIDs: tids, Hosts: hosts, Tools: tools, OK: ok, Denied: denied, Before: before, Limit: limit})
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, err)
 		return
@@ -611,15 +669,66 @@ func (a *API) sse(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
+	// 反向代理（nginx）默认会缓冲响应，实时事件会被攒成一批才到浏览器
+	w.Header().Set("X-Accel-Buffering", "no")
 	ch, unsubscribe := a.Events.Subscribe()
 	defer unsubscribe()
+	// 立即写一行注释并刷出：浏览器的 EventSource 要收到首个字节才触发 onopen，
+	// 网关空闲时控制台否则会一直显示「正在连接」
+	fmt.Fprint(w, ": connected\n\n")
+	flusher.Flush()
+	heartbeat := time.NewTicker(sseHeartbeat)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-heartbeat.C:
+			// 注释行不会触发 onmessage，只为让中间代理与客户端知道连接还活着
+			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
 		case e := <-ch:
 			fmt.Fprintf(w, "data: %s\n\n", e.JSON())
 			flusher.Flush()
 		}
 	}
+}
+
+// sseHeartbeat 小于常见代理的空闲超时（nginx proxy_read_timeout 默认 60s）
+var sseHeartbeat = 25 * time.Second
+
+// overview 返回概览页的聚合统计。hours 取 1–168，默认 24；时间片按窗口自动选 5 分钟或 1 小时。
+func (a *API) overview(w http.ResponseWriter, r *http.Request) {
+	hours := 24
+	if raw := r.URL.Query().Get("hours"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 168 {
+			apiError(w, http.StatusBadRequest, fmt.Errorf("hours 取值 1–168"))
+			return
+		}
+		hours = value
+	}
+	bucket := time.Hour
+	if hours <= 2 {
+		bucket = 5 * time.Minute
+	}
+	// 窗口对齐到时间片边界：同一小时内反复刷新，柱子不会整体平移。
+	now := time.Now().UnixMilli()
+	end := (now/bucket.Milliseconds() + 1) * bucket.Milliseconds()
+	since := end - int64(hours)*time.Hour.Milliseconds()
+	summary, err := a.Store.SummarizeAudit(r.Context(), since, bucket.Milliseconds(), now)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonOut(w, http.StatusOK, map[string]any{
+		"window_hours": hours,
+		"bucket_ms":    bucket.Milliseconds(),
+		"generated_at": now,
+		"summary":      summary,
+	})
+}
+
+func (a *API) info(w http.ResponseWriter, r *http.Request) {
+	jsonOut(w, http.StatusOK, a.Info)
 }

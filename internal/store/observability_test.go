@@ -18,7 +18,7 @@ func TestAuditPreservesTokenIdentityAfterTokenDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = st.AddAudit(ctx, Audit{
+	if _, err = st.AddAudit(ctx, Audit{
 		Ts:         1,
 		TokenID:    sql.NullInt64{Int64: token.ID, Valid: true},
 		TokenName:  sql.NullString{String: token.Name, Valid: true},
@@ -59,10 +59,10 @@ func TestListAuditFiltersByOK(t *testing.T) {
 	}
 	defer st.Close()
 
-	if err = st.AddAudit(ctx, Audit{Ts: 1, Tool: "exec", ParamsJSON: "{}", OK: true}); err != nil {
+	if _, err = st.AddAudit(ctx, Audit{Ts: 1, Tool: "exec", ParamsJSON: "{}", OK: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err = st.AddAudit(ctx, Audit{Ts: 2, Tool: "exec", ParamsJSON: "{}", OK: false}); err != nil {
+	if _, err = st.AddAudit(ctx, Audit{Ts: 2, Tool: "exec", ParamsJSON: "{}", OK: false}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,7 +99,7 @@ func TestListAuditFiltersByMultipleValues(t *testing.T) {
 		{Ts: 3, Tool: "job_list", Host: sql.NullString{String: "db-01", Valid: true}, ParamsJSON: "{}", OK: true},
 	}
 	for _, row := range rows {
-		if err = st.AddAudit(ctx, row); err != nil {
+		if _, err = st.AddAudit(ctx, row); err != nil {
 			t.Fatal(err)
 		}
 	}

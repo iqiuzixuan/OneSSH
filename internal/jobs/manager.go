@@ -47,6 +47,12 @@ type LogChunk struct {
 	Complete   bool   `json:"complete"`
 }
 
+// Snapshot 返回库里记录的任务状态，不连远端核对。
+// 控制台侧栏、概览这类只要计数的地方用它，避免每次轮询都对每个运行中任务发一条 SSH 命令。
+func Snapshot(j store.Job) Status {
+	return Status{Job: view(j), LogBytes: j.LogBytes}
+}
+
 func view(j store.Job) JobView {
 	out := JobView{ID: j.ID, HostID: j.HostID, Command: j.Command, Cwd: j.Cwd, UsedSetsid: j.UsedSetsid, Status: j.Status, StartedAt: j.StartedAt}
 	if j.PID.Valid {

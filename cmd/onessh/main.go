@@ -61,9 +61,11 @@ func main() {
 	defer mcpService.Close()
 	adminAuth := webapi.NewAdminAuth(cfg.AdminPassword, cfg.MasterKey)
 	adminAPI := webapi.NewAPI(st, box, pool, hosts, mcpService.Exec, mcpService.Files, mcpService.Jobs, mcpService.Monitor, memEngine, bus)
+	adminAPI.Info = webapi.GatewayInfo{Version: version, StartedAt: time.Now().UnixMilli(), Listen: cfg.Listen}
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/login", http.HandlerFunc(adminAuth.Login))
+	mux.Handle("POST /api/v1/logout", http.HandlerFunc(adminAuth.Logout))
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource", oauthService.ProtectedResourceMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", oauthService.ProtectedResourceMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", oauthService.AuthorizationServerMetadata)

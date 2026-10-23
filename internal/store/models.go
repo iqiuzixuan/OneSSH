@@ -98,14 +98,17 @@ type Job struct {
 }
 
 type Audit struct {
-	ID, Ts               int64
-	TokenID              sql.NullInt64
-	TokenName            sql.NullString
-	Tool                 string
-	Host                 sql.NullString
-	ParamsJSON           string
-	RunIDs               []string `json:"RunIDs,omitempty"`
-	OK                   bool
+	ID, Ts     int64
+	TokenID    sql.NullInt64
+	TokenName  sql.NullString
+	Tool       string
+	Host       sql.NullString
+	ParamsJSON string
+	RunIDs     []string `json:"RunIDs,omitempty"`
+	OK         bool
+	// Denied 表示调用被网关的权限检查拦下（主机未授权、工具组被禁用等），
+	// 与执行失败区分开；Denied 为真时 OK 必为假。
+	Denied               bool
 	ExitCode             sql.NullInt64
 	DurationMS, BytesOut int64
 }

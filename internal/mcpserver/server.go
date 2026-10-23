@@ -147,16 +147,22 @@ func register[In, Out any](s *Server, tool *mcp.Tool, handler mcp.ToolHandlerFor
 	s.apps.decorate(tool)
 	mcp.AddTool(s.MCP, tool, func(ctx context.Context, req *mcp.CallToolRequest, in In) (result *mcp.CallToolResult, out Out, err error) {
 		started := time.Now()
+		ctx, mark := withDenyMark(ctx)
 		result, out, err = handler(ctx, req, in)
 		ok := err == nil && (result == nil || !result.IsError)
 		var exitCode *int64
 		if outcome, found := any(out).(auditOutcome); found && ok {
 			ok, exitCode = outcome.auditOutcome()
 		}
+		// 任何一台主机或一项权限被拒，整次调用都按拒绝记：这是权限在起作用的信号，不能被部分成功淹没。
+		denied := mark.denied.Load()
+		if denied {
+			ok = false
+		}
 		params := redactedJSON(in)
 		host := hostOf(in)
 		p, _ := FromContext(ctx)
-		a := store.Audit{Ts: store.NowAudit(), Tool: tool.Name, ParamsJSON: params, OK: ok, DurationMS: time.Since(started).Milliseconds()}
+		a := store.Audit{Ts: store.NowAudit(), Tool: tool.Name, ParamsJSON: params, OK: ok, Denied: denied, DurationMS: time.Since(started).Milliseconds()}
 		if p.Token.ID != 0 {
 			a.TokenID = sql.NullInt64{Int64: p.Token.ID, Valid: true}
 			a.TokenName = sql.NullString{String: p.Token.Name, Valid: true}
@@ -173,14 +179,32 @@ func register[In, Out any](s *Server, tool *mcp.Tool, handler mcp.ToolHandlerFor
 		if raw, e := json.Marshal(out); e == nil {
 			a.BytesOut = int64(len(raw))
 		}
-		_ = s.Store.AddAudit(context.Background(), a)
-		event := map[string]any{"tool": tool.Name, "host": host, "ok": ok, "duration_ms": a.DurationMS}
+		auditID, _ := s.Store.AddAudit(context.Background(), a)
+		event := map[string]any{"tool": tool.Name, "host": host, "ok": ok, "denied": denied, "duration_ms": a.DurationMS}
+		withAuditEventFields(event, auditID, a)
 		if summary := callSummary(in); summary != "" {
 			event["summary"] = summary
 		}
 		s.Events.Publish("tool_call", event)
 		return
 	})
+}
+
+// withAuditEventFields 给 tool_call 事件补上前端把推送与审计行、令牌、命令执行对上所需的字段。
+func withAuditEventFields(event map[string]any, auditID int64, a store.Audit) {
+	if auditID > 0 {
+		event["id"] = auditID
+	}
+	if a.TokenID.Valid {
+		event["token_id"] = a.TokenID.Int64
+		event["token_name"] = a.TokenName.String
+	}
+	if a.ExitCode.Valid {
+		event["exit_code"] = a.ExitCode.Int64
+	}
+	if len(a.RunIDs) > 0 {
+		event["run_ids"] = a.RunIDs
+	}
 }
 
 type auditOutcome interface {

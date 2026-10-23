@@ -7,7 +7,11 @@ import (
 	"strings"
 )
 
-//go:embed dist/*
+// all: 前缀不能省：默认规则会静默跳过以 _ 或 . 开头的文件，而 Vite 会产出
+// __vite-browser-external-*.js 这类下划线开头的分块（终端页依赖它），漏掉就会回落成 index.html，
+// 浏览器按 MIME 拒绝执行，整页加载失败。
+//
+//go:embed all:dist
 var assets embed.FS
 
 func Handler() http.Handler {

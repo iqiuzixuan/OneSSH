@@ -60,3 +60,20 @@ func TestAdminLoginCookieSecureForHTTPS(t *testing.T) {
 		})
 	}
 }
+
+func TestAdminLogoutExpiresSessionCookie(t *testing.T) {
+	a := NewAdminAuth("pw", bytes.Repeat([]byte{1}, 32))
+	response := httptest.NewRecorder()
+	a.Logout(response, httptest.NewRequest(http.MethodPost, "https://onessh.example/api/v1/logout", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("登出状态码 %d", response.Code)
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookie 数量 = %d", len(cookies))
+	}
+	c := cookies[0]
+	if c.Name != "onessh_session" || c.Value != "" || c.MaxAge >= 0 || c.Path != "/" || !c.HttpOnly || !c.Secure {
+		t.Fatalf("登出 cookie = %#v", c)
+	}
+}

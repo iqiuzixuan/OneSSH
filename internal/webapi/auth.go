@@ -39,6 +39,14 @@ func (a *AdminAuth) Login(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
+// Logout 让浏览器删除会话 cookie。cookie 是 HttpOnly 的，前端脚本清不掉，必须由服务端下发过期的同名 cookie。
+// 会话是无状态的 HMAC 签名，不需要也没有服务端记录可删；不要求已登录，重复调用无副作用。
+func (a *AdminAuth) Logout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{Name: "onessh_session", Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: requestIsHTTPS(r), MaxAge: -1})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
 func requestIsHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true

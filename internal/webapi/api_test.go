@@ -131,7 +131,7 @@ func TestAuditFiltersUseRepeatedQueryValues(t *testing.T) {
 		{Ts: 2, Tool: "file_read", Host: sql.NullString{String: "edge,west", Valid: true}, ParamsJSON: "{}", OK: true},
 		{Ts: 3, Tool: "job_list", Host: sql.NullString{String: "other", Valid: true}, ParamsJSON: "{}", OK: true},
 	} {
-		if err := st.AddAudit(ctx, row); err != nil {
+		if _, err := st.AddAudit(ctx, row); err != nil {
 			t.Fatal(err)
 		}
 	}

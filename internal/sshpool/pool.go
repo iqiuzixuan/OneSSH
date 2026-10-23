@@ -23,10 +23,87 @@ const (
 )
 
 type entry struct {
+	// mu 保护连接本身，建连期间一直持有（可能长达握手超时）。
 	mu     sync.Mutex
 	client *ssh.Client
 	online bool
+	// hmu 只保护展示用的连通状态，从不在网络 IO 期间持有：
+	// 控制台读状态不能被某台不可达主机的长时间建连卡住。
+	hmu    sync.Mutex
+	status entryStatus
 }
+
+// entryStatus 只服务于控制台的在线状态展示，时间均为毫秒。
+type entryStatus struct {
+	up          bool
+	connectedAt int64
+	checkedAt   int64
+	lastErr     string
+	lastErrAt   int64
+}
+
+// Health 是某台主机最近一次建连 / 保活的结果。只存在内存里，网关重启后从 unknown 开始，
+// 直到监控采样、命令执行或测试连接真正碰到这台主机。
+type Health struct {
+	// State 取 online（连接池里有可用连接）、offline（最近一次建连或保活失败）、unknown（还没连过）。
+	State       string `json:"state"`
+	CheckedAt   int64  `json:"checked_at,omitempty"`
+	OnlineSince int64  `json:"online_since,omitempty"`
+	Error       string `json:"error,omitempty"`
+	ErrorAt     int64  `json:"error_at,omitempty"`
+}
+
+func (e *entry) health() Health {
+	e.hmu.Lock()
+	defer e.hmu.Unlock()
+	st := e.status
+	h := Health{State: "unknown", CheckedAt: st.checkedAt}
+	switch {
+	case st.up:
+		h.State = "online"
+		h.OnlineSince = st.connectedAt
+	case st.lastErr != "":
+		h.State = "offline"
+		h.Error = st.lastErr
+		h.ErrorAt = st.lastErrAt
+	}
+	return h
+}
+
+func (e *entry) markUp() {
+	now := time.Now().UnixMilli()
+	e.hmu.Lock()
+	e.status = entryStatus{up: true, connectedAt: now, checkedAt: now}
+	e.hmu.Unlock()
+}
+
+func (e *entry) markFailed(err error) {
+	now := time.Now().UnixMilli()
+	e.hmu.Lock()
+	e.status = entryStatus{lastErr: err.Error(), lastErrAt: now, checkedAt: now}
+	e.hmu.Unlock()
+}
+
+func (e *entry) markAlive() {
+	e.hmu.Lock()
+	if e.status.up {
+		e.status.checkedAt = time.Now().UnixMilli()
+	}
+	e.hmu.Unlock()
+}
+
+func (e *entry) markDown() {
+	e.hmu.Lock()
+	e.status.up = false
+	e.hmu.Unlock()
+}
+
+func (e *entry) resetStatus() {
+	e.hmu.Lock()
+	e.status = entryStatus{}
+	e.hmu.Unlock()
+}
+
 type Pool struct {
 	store   *store.Store
 	box     *cryptox.Box
@@ -72,10 +149,17 @@ func (p *Pool) get(ctx context.Context, name string, via []string) (*ssh.Client,
 	client, err := p.dial(ctx, h, via)
 	if err != nil {
 		e.online = false
+		// 调用方主动取消不代表主机不可达，不能把它记成离线。
+		if ctx.Err() == nil {
+			e.markFailed(err)
+		} else {
+			e.markDown()
+		}
 		return nil, err
 	}
 	e.client = client
 	e.online = true
+	e.markUp()
 	go p.keepalive(name, e, client)
 	return client, nil
 }
@@ -249,12 +333,14 @@ func (p *Pool) keepalive(name string, e *entry, c *ssh.Client) {
 				if e.client == c {
 					e.online = false
 					e.client = nil
+					e.markFailed(fmt.Errorf("keepalive 失败: %w", err))
 				}
 				e.mu.Unlock()
 				c.Close()
 				log.Printf("SSH %s keepalive 失败: %v", name, err)
 				return
 			}
+			e.markAlive()
 		}
 	}
 }
@@ -271,8 +357,21 @@ func (p *Pool) Invalidate(name string) {
 	if e.client != nil {
 		e.client.Close()
 	}
+	// 主机配置变了，旧的连通结论不再适用，回到 unknown。
 	e.client = nil
 	e.online = false
+	e.resetStatus()
+}
+
+// Health 返回某台主机的连通状态；从未连过的主机返回 unknown。
+func (p *Pool) Health(name string) Health {
+	p.mu.Lock()
+	e := p.entries[name]
+	p.mu.Unlock()
+	if e == nil {
+		return Health{State: "unknown"}
+	}
+	return e.health()
 }
 func (p *Pool) Close() {
 	select {
@@ -290,5 +389,6 @@ func (p *Pool) Close() {
 		}
 		e.online = false
 		e.mu.Unlock()
+		e.markDown()
 	}
 }

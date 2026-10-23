@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -40,17 +41,17 @@ func (s *Server) installTokenDenylist() {
 				name := callToolName(req)
 				// 解析不出工具名时 fail-closed：有 denylist 生效就不能放行空名绕过。
 				if name == "" {
-					s.auditDeniedTool(ctx, "(unparseable)")
+					s.auditDeniedTool(ctx, "(unparseable)", req)
 					return errorResult("tool not authorized"), nil
 				}
 				if disabled.HidesTool(name) {
-					s.auditDeniedTool(ctx, name)
+					s.auditDeniedTool(ctx, name, req)
 					return errorResult("tool not authorized: " + name), nil
 				}
 			case "resources/read":
 				if uri := readResourceURI(req); uri != "" {
 					if tool, ok := s.apps.toolNameForURI(uri); ok && disabled.HidesTool(tool) {
-						s.auditDeniedTool(ctx, tool)
+						s.auditDeniedTool(ctx, tool, req)
 						return nil, mcp.ResourceNotFoundError(uri)
 					}
 				}
@@ -162,7 +163,7 @@ func filterTemplates(templates []*mcp.ResourceTemplate, disabled toolgroups.Disa
 	return out
 }
 
-func (s *Server) auditDeniedTool(ctx context.Context, toolName string) {
+func (s *Server) auditDeniedTool(ctx context.Context, toolName string, req mcp.Request) {
 	if s.Store == nil {
 		return
 	}
@@ -171,15 +172,51 @@ func (s *Server) auditDeniedTool(ctx context.Context, toolName string) {
 		Tool:       toolName,
 		ParamsJSON: "{}",
 		OK:         false,
+		Denied:     true,
 	}
 	if p, ok := FromContext(ctx); ok && p.Token.ID != 0 {
 		a.TokenID = sql.NullInt64{Int64: p.Token.ID, Valid: true}
 		a.TokenName = sql.NullString{String: p.Token.Name, Valid: true}
 	}
-	_ = s.Store.AddAudit(context.Background(), a)
-	if s.Events != nil {
-		s.Events.Publish("tool_call", map[string]any{
-			"tool": toolName, "ok": false, "duration_ms": int64(0), "denied": true,
-		})
+	// 参数里的主机名只用于展示「想去哪」，不参与任何授权判断。
+	host := callToolHost(req)
+	if host != "" {
+		a.Host = sql.NullString{String: host, Valid: true}
 	}
+	auditID, _ := s.Store.AddAudit(context.Background(), a)
+	if s.Events != nil {
+		event := map[string]any{
+			"tool": toolName, "host": host, "ok": false, "duration_ms": int64(0), "denied": true,
+			"summary": "工具组已禁用",
+		}
+		withAuditEventFields(event, auditID, a)
+		s.Events.Publish("tool_call", event)
+	}
+}
+
+// callToolHost 尽力从 tools/call 的原始参数里取出 host 字段；取不到返回空串。
+func callToolHost(req mcp.Request) string {
+	if req == nil {
+		return ""
+	}
+	var raw json.RawMessage
+	switch p := req.GetParams().(type) {
+	case *mcp.CallToolParamsRaw:
+		if p != nil {
+			raw = p.Arguments
+		}
+	case *mcp.CallToolParams:
+		if p != nil {
+			if b, err := json.Marshal(p.Arguments); err == nil {
+				raw = b
+			}
+		}
+	}
+	var args struct {
+		Host string `json:"host"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &args) != nil {
+		return ""
+	}
+	return args.Host
 }

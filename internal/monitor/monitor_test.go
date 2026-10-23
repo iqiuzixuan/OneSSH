@@ -44,7 +44,7 @@ func TestStartCleansRetentionWhenPollingDisabled(t *testing.T) {
 	if err := st.AddMetric(ctx, store.Metric{HostID: 1, Ts: old.UnixMilli(), DisksJSON: "[]"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AddAudit(ctx, store.Audit{Ts: old.UnixMilli(), Tool: "exec", ParamsJSON: "{}", OK: true}); err != nil {
+	if _, err := st.AddAudit(ctx, store.Audit{Ts: old.UnixMilli(), Tool: "exec", ParamsJSON: "{}", OK: true}); err != nil {
 		t.Fatal(err)
 	}
 	artifact := filepath.Join(dataDir, "artifacts", uuid.NewString()+".log")

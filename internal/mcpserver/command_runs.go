@@ -35,10 +35,18 @@ func (s *Server) startCommandRun(ctx context.Context, tool string, host store.Ho
 	if err := s.Store.CreateCommandRun(ctx, run); err != nil {
 		return store.CommandRun{}, err
 	}
-	s.Events.Publish("command_started", map[string]any{
+	started := map[string]any{
 		"run_id": run.ID, "tool": tool, "host": host.Name, "command": command,
 		"cwd": cwd, "status": "running", "started_at": run.StartedAt,
-	})
+	}
+	if run.TokenID.Valid {
+		started["token_id"] = run.TokenID.Int64
+		started["token_name"] = run.TokenName.String
+	}
+	if session != "" {
+		started["session"] = session
+	}
+	s.Events.Publish("command_started", started)
 	return run, nil
 }
 
@@ -96,6 +104,7 @@ func (s *Server) finishCommandRun(ctx context.Context, run store.CommandRun, res
 		"run_id": run.ID, "tool": run.Tool, "host": run.Host, "status": status,
 		"exit_code": exitCode, "stdout_bytes": finish.StdoutBytes, "stderr_bytes": finish.StderrBytes,
 		"output_available": finish.OutputAvailable, "finished_at": finish.FinishedAt,
+		"duration_ms": finish.FinishedAt - run.StartedAt,
 	})
 	return nil
 }
